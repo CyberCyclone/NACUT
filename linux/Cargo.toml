@@ -1,0 +1,52 @@
+[package]
+name = "nacut-gtk"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+authors = ["Casey Gibson"]
+description = "NACUT for Linux: a GTK4/libadwaita tray app for Claude usage"
+repository = "https://github.com/CyberCyclone/NACUT"
+
+[[bin]]
+name = "nacut-gtk"
+path = "src/main.rs"
+
+[dependencies]
+nacut-core = { path = "../core/nacut-core" }
+gtk = { package = "gtk4", version = "0.10", features = ["v4_14"] }
+adw = { package = "libadwaita", version = "0.8", features = ["v1_5"] }
+pangocairo = "0.21"
+ksni = { version = "0.3", features = ["blocking"] }
+async-channel = "2"
+serde_json = "1"
+jiff = "0.2"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+# Separate from the core workspace so macOS and Windows builds don't need GTK.
+[workspace]
+
+# `cargo deb` (after building nacut-cli in ../core) packages the app, the `nacut` CLI, the desktop entry and icons.
+[package.metadata.deb]
+name = "nacut"
+maintainer = "Casey Gibson"
+copyright = "2026 Casey Gibson"
+license-file = ["../LICENSE", "0"]
+extended-description = """\
+NACUT (Not Another Claude Usage Tracker) shows Claude Code usage in the tray: plan limits on a Max or Pro \
+subscription, cost on API pay-as-you-go, with forecasts, a calendar heatmap, per-model and per-project \
+breakdowns. Includes the `nacut` command-line tool (status bars such as Waybar). Not affiliated with Anthropic."""
+section = "utils"
+priority = "optional"
+depends = "libgtk-4-1 (>= 4.14), libadwaita-1-0 (>= 1.5), libdbus-1-3"
+recommends = "gnome-shell-extension-appindicator"
+assets = [
+    ["target/release/nacut-gtk", "usr/bin/", "755"],
+    ["../core/target/release/nacut", "usr/bin/", "755"],
+    ["data/io.github.cybercyclone.nacut.desktop", "usr/share/applications/", "644"],
+    ["data/icons/io.github.cybercyclone.nacut-128.png", "usr/share/icons/hicolor/128x128/apps/io.github.cybercyclone.nacut.png", "644"],
+    ["data/icons/io.github.cybercyclone.nacut-256.png", "usr/share/icons/hicolor/256x256/apps/io.github.cybercyclone.nacut.png", "644"],
+    ["data/icons/io.github.cybercyclone.nacut-512.png", "usr/share/icons/hicolor/512x512/apps/io.github.cybercyclone.nacut.png", "644"],
+]

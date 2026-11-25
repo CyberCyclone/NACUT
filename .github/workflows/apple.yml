@@ -1,0 +1,35 @@
+name: macOS app
+
+on:
+  push:
+    paths: ['core/**', 'shared/**', 'apple/**', '.github/workflows/apple.yml']
+  pull_request:
+    paths: ['core/**', 'shared/**', 'apple/**', '.github/workflows/apple.yml']
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: Tools
+        run: brew install xcodegen
+      - name: Rust core → XCFramework
+        run: apple/scripts/build-core.sh
+      - name: Build
+        working-directory: apple
+        run: |
+          xcodegen generate
+          xcodebuild -project NACUT.xcodeproj -scheme NACUT -configuration Release \
+            -derivedDataPath ../build/DerivedData CODE_SIGN_IDENTITY=- build
+      - name: Zip
+        run: cd build/DerivedData/Build/Products/Release && ditto -c -k --keepParent NACUT.app NACUT-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NACUT-macOS
+          path: build/DerivedData/Build/Products/Release/NACUT-macOS.zip

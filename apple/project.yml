@@ -1,0 +1,94 @@
+name: NACUT
+options:
+  bundleIdPrefix: com.caseygibson
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    # Optional: set DEVELOPMENT_TEAM to your Apple ID team (Xcode → Settings → Accounts)
+    # and CODE_SIGN_IDENTITY to "Apple Development". Empty = "Sign to Run Locally".
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_IDENTITY: "-"
+    ENABLE_HARDENED_RUNTIME: NO
+    DEAD_CODE_STRIPPING: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+packages:
+  # The shared Rust core (core/), built by scripts/build-core.sh into NacutCore/nacutFFI.xcframework.
+  NacutCore:
+    path: NacutCore
+targets:
+  NACUT:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - Shared
+    dependencies:
+      - package: NacutCore
+      - target: NACUTWidget
+    info:
+      path: App/Info.plist
+      properties:
+        LSUIElement: true
+        CFBundleDisplayName: NACUT
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSHumanReadableCopyright: © 2026 Casey Gibson. MIT License.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.caseygibson.NACUT
+            CFBundleURLSchemes: [nacut]
+    entitlements:
+      path: App/NACUT.entitlements
+      properties: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.caseygibson.NACUT
+        PRODUCT_NAME: NACUT
+        PRODUCT_MODULE_NAME: NACUT
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+  NACUTWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - Widget
+      - Shared
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: NACUT
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widget/NACUTWidget.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        # The app writes its snapshot here; the widget only reads it.
+        com.apple.security.temporary-exception.files.home-relative-path.read-only:
+          - /Library/Application Support/NACUT/
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.caseygibson.NACUT.Widget
+        PRODUCT_NAME: NACUTWidget
+schemes:
+  NACUT:
+    build:
+      targets:
+        NACUT: all
+        NACUTWidget: all
+    run:
+      config: Debug
+    archive:
+      config: Release

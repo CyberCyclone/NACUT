@@ -1,0 +1,30 @@
+name: Core
+
+on:
+  push:
+    paths: ['core/**', 'shared/**', '.github/workflows/core.yml']
+  pull_request:
+    paths: ['core/**', 'shared/**', '.github/workflows/core.yml']
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - name: Linux keyring headers
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: Test
+        working-directory: core
+        run: cargo test --workspace
+      - name: CLI smoke test
+        working-directory: core
+        run: cargo run -q -p nacut-cli -- summary --root ../shared/fixtures/proj

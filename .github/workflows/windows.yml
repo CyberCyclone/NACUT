@@ -1,0 +1,54 @@
+name: Windows app
+
+on:
+  push:
+    paths: ['core/**', 'shared/**', 'windows/**', '.github/workflows/windows.yml']
+  pull_request:
+    paths: ['core/**', 'shared/**', 'windows/**', '.github/workflows/windows.yml']
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      HAS_CERT: ${{ secrets.NACUT_CERT_PFX != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Rust core and C# bindings
+        shell: pwsh
+        run: windows/scripts/build-core.ps1 -All
+      - name: Build (unpackaged)
+        working-directory: windows/NACUT
+        run: dotnet publish -c Release -p:Platform=${{ matrix.platform }} -o ../../build/NACUT-${{ matrix.platform }}
+      # MSIX needs a code-signing certificate. Add one as the NACUT_CERT_PFX (base64) and NACUT_CERT_PASSWORD
+      # secrets to also build a signed package; without them only the zip is produced.
+      - name: Signed MSIX
+        if: env.HAS_CERT == 'true'
+        env:
+          CERT: ${{ secrets.NACUT_CERT_PFX }}
+          CERT_PASSWORD: ${{ secrets.NACUT_CERT_PASSWORD }}
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'nacut.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT))
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString $env:CERT_PASSWORD -AsPlainText -Force)
+          $env:NACUT_CERT_THUMBPRINT = $cert.Thumbprint
+          windows/scripts/package.ps1 -Platform ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NACUT-Windows-${{ matrix.platform }}
+          path: |
+            build/NACUT-${{ matrix.platform }}
+            windows/NACUT/AppPackages/**/*.msix

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=NACUT
+GenericName=Claude Usage Tracker
+Comment=Claude plan limits and cost in the tray
+Exec=nacut-gtk
+Icon=io.github.cybercyclone.nacut
+Terminal=false
+Categories=Utility;Development;
+Keywords=Claude;Anthropic;usage;limits;cost;tokens;
+StartupNotify=true
+X-GNOME-UsesNotifications=true

@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>Nacut</RootNamespace>
+    <AssemblyName>NACUT</AssemblyName>
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <RuntimeIdentifier Condition="'$(Platform)' == 'ARM64'">win-arm64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(Platform)' == 'x64'">win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Program.cs owns Main so a second launch can hand off to the running instance. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\nacut.ico</ApplicationIcon>
+    <Version>1.0.0</Version>
+    <Product>NACUT</Product>
+    <Company>Casey Gibson</Company>
+    <Copyright>© 2026 Casey Gibson</Copyright>
+    <!-- Warnings from the UniFFI-generated bindings. -->
+    <NoWarn>$(NoWarn);CS8618;CS8625;CS8603;CS8604;CS8600;CS8602;CS0108;CS1591</NoWarn>
+  </PropertyGroup>
+
+  <!-- Default: a plain .exe (unpackaged). `-p:Packaged=true` builds a signed MSIX, which adds the Widgets board
+       provider and a startup task. Signing uses the certificate whose thumbprint is in NACUT_CERT_THUMBPRINT
+       (scripts/package.ps1 creates a local test certificate). -->
+  <PropertyGroup Condition="'$(Packaged)' != 'true'">
+    <WindowsPackageType>None</WindowsPackageType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Packaged)' == 'true'">
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
+    <AppxBundle>Never</AppxBundle>
+    <AppxPackageDir>$(MSBuildProjectDirectory)\AppPackages\</AppxPackageDir>
+    <AppxPackageSigningEnabled>true</AppxPackageSigningEnabled>
+    <PackageCertificateThumbprint>$(NACUT_CERT_THUMBPRINT)</PackageCertificateThumbprint>
+    <GenerateTestArtifacts>false</GenerateTestArtifacts>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.7.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2957" />
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.4.1" />
+    <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" Version="8.2.251219" />
+    <PackageReference Include="CommunityToolkit.WinUI.Controls.Segmented" Version="8.2.251219" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- scripts/build-core.ps1 generates Core\nacut.cs (compiled like any other source) and this DLL. -->
+    <None Include="native\$(Platform)\nacut_ffi.dll" Link="nacut_ffi.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\$(Platform)\nacut_ffi.dll')" />
+    <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Public\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

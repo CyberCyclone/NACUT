@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = ["nacut-core", "nacut-cli", "nacut-ffi"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+authors = ["Casey Gibson"]
+repository = "https://github.com/CyberCyclone/NACUT"
+
+[workspace.dependencies]
+nacut-core = { path = "nacut-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+jiff = { version = "0.2", features = ["serde"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

@@ -1,0 +1,49 @@
+# Flatpak build of NACUT for Linux.
+#
+#   linux/flatpak/build.sh            # generates cargo-sources.json, builds and installs for this user
+#
+# Permissions, and why:
+#   network                     plan limits (/api/oauth/usage) and the optional Usage & Cost API
+#   ~/.claude, ~/.config/claude read-only: Claude Code transcripts and its sign-in file
+#   org.kde.StatusNotifierWatcher  the tray icon
+#   org.freedesktop.secrets     the optional API key, kept in the keyring
+#   org.freedesktop.Flatpak     runs the host's `claude` to refresh its sign-in (about every 8 hours);
+#                               remove it if you don't use plan limits (they then need `claude` run by hand)
+app-id: io.github.cybercyclone.nacut
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: nacut-gtk
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --share=network
+  - --filesystem=~/.claude:ro
+  - --filesystem=~/.config/claude:ro
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.freedesktop.Flatpak
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/nacut/cargo
+    CARGO_NET_OFFLINE: 'true'
+modules:
+  - name: nacut
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --manifest-path linux/Cargo.toml
+      - install -Dm755 linux/target/release/nacut-gtk /app/bin/nacut-gtk
+      - install -Dm644 linux/data/io.github.cybercyclone.nacut.desktop /app/share/applications/io.github.cybercyclone.nacut.desktop
+      - install -Dm644 linux/data/icons/io.github.cybercyclone.nacut-128.png /app/share/icons/hicolor/128x128/apps/io.github.cybercyclone.nacut.png
+      - install -Dm644 linux/data/icons/io.github.cybercyclone.nacut-256.png /app/share/icons/hicolor/256x256/apps/io.github.cybercyclone.nacut.png
+      - install -Dm644 linux/data/icons/io.github.cybercyclone.nacut-512.png /app/share/icons/hicolor/512x512/apps/io.github.cybercyclone.nacut.png
+    sources:
+      - type: dir
+        path: ../..
+        skip: [core/target, linux/target, windows, apple, build, .git]
+      - cargo-sources.json

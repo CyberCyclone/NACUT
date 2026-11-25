@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MSIX package (build with -p:Packaged=true). Adds the Widgets board provider and a startup task. -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 uap5 com desktop rescap">
+
+  <!-- Publisher must match the signing certificate's subject. -->
+  <Identity Name="CaseyGibson.NACUT" Publisher="CN=Casey Gibson" Version="1.0.0.0" />
+
+  <Properties>
+    <DisplayName>NACUT</DisplayName>
+    <PublisherDisplayName>Casey Gibson</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Not Another Claude Usage Tracker: plan limits and cost for Claude Code.</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+      <uap:VisualElements
+        DisplayName="NACUT"
+        Description="Claude usage in the tray: plan limits, cost and forecasts"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+
+      <Extensions>
+        <uap5:Extension Category="windows.startupTask">
+          <uap5:StartupTask TaskId="NACUTStartup" Enabled="false" DisplayName="NACUT" />
+        </uap5:Extension>
+
+        <!-- Toast notifications: Windows App SDK's notification activator. -->
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="3C4D7D04-1823-4884-9057-E80C3108EBC7" />
+        </desktop:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="NACUT.exe" Arguments="----AppNotificationActivated:" DisplayName="NACUT notifications">
+              <com:Class Id="3C4D7D04-1823-4884-9057-E80C3108EBC7" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="NACUT.exe" Arguments="-RegisterProcessAsComServer" DisplayName="NACUT widget provider">
+              <com:Class Id="0680C996-81BF-4C02-B604-E3E659D8A8E3" DisplayName="NACUT widget provider" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+
+        <uap3:Extension Category="windows.appExtension">
+          <uap3:AppExtension Name="com.microsoft.windows.widgets" DisplayName="NACUT" Id="NacutWidgets" PublicFolder="Public">
+            <uap3:Properties>
+              <WidgetProvider>
+                <ProviderIcons>
+                  <Icon Path="Assets\WidgetIcon.png" />
+                </ProviderIcons>
+                <Activation>
+                  <CreateInstance ClassId="0680C996-81BF-4C02-B604-E3E659D8A8E3" />
+                </Activation>
+                <Definitions>
+                  <Definition Id="NacutUsage" DisplayName="Claude usage" Description="Plan limits or cost from NACUT">
+                    <Capabilities>
+                      <Capability><Size Name="small" /></Capability>
+                      <Capability><Size Name="medium" /></Capability>
+                      <Capability><Size Name="large" /></Capability>
+                    </Capabilities>
+                    <ThemeResources>
+                      <Icons><Icon Path="Assets\WidgetIcon.png" /></Icons>
+                      <Screenshots><Screenshot Path="Assets\WidgetScreenshot.png" DisplayAltText="NACUT showing plan limits" /></Screenshots>
+                      <DarkMode />
+                      <LightMode />
+                    </ThemeResources>
+                  </Definition>
+                </Definitions>
+              </WidgetProvider>
+            </uap3:Properties>
+          </uap3:AppExtension>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

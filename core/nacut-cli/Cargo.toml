@@ -1,0 +1,16 @@
+[package]
+name = "nacut-cli"
+description = "NACUT command-line tool: Claude usage totals, plan limits and status-bar output"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "nacut"
+path = "src/main.rs"
+
+[dependencies]
+nacut-core.workspace = true
+serde_json.workspace = true
