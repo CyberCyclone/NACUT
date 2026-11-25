@@ -1,0 +1,23 @@
+{
+  "updated": "2026-11-25",
+  "webSearchPerThousand": 10.0,
+  "fastMultiplier": 2.0,
+  "models": [
+    { "id": "claude-fable-5-2",  "name": "Fable 5.2",  "family": "fable",  "rank": 52, "input": 8,    "output": 40,  "write5m": 10,    "write1h": 16,  "read": 0.20 },
+    { "id": "claude-fable-5-1",  "name": "Fable 5.1",  "family": "fable",  "rank": 51, "input": 10,   "output": 50,  "write5m": 12.5,  "write1h": 20,  "read": 0.25 },
+    { "id": "claude-fable-5",    "name": "Fable 5",    "family": "fable",  "rank": 50, "input": 10,   "output": 50,  "write5m": 12.5,  "write1h": 20,  "read": 1.00 },
+    { "id": "claude-opus-5-5",   "name": "Opus 5.5",   "family": "opus",   "rank": 55, "input": 4,    "output": 20,  "write5m": 5,     "write1h": 8,   "read": 0.20 },
+    { "id": "claude-opus-5",     "name": "Opus 5",     "family": "opus",   "rank": 50, "input": 5,    "output": 25,  "write5m": 6.25,  "write1h": 10,  "read": 0.50 },
+    { "id": "claude-opus-4-8",   "name": "Opus 4.8",   "family": "opus",   "rank": 48, "input": 5,    "output": 25,  "write5m": 6.25,  "write1h": 10,  "read": 0.50 },
+    { "id": "claude-opus-4-7",   "name": "Opus 4.7",   "family": "opus",   "rank": 47, "input": 5,    "output": 25,  "write5m": 6.25,  "write1h": 10,  "read": 0.50 },
+    { "id": "claude-opus-4-6",   "name": "Opus 4.6",   "family": "opus",   "rank": 46, "input": 5,    "output": 25,  "write5m": 6.25,  "write1h": 10,  "read": 0.50 },
+    { "id": "claude-opus-4-5",   "name": "Opus 4.5",   "family": "opus",   "rank": 45, "input": 5,    "output": 25,  "write5m": 6.25,  "write1h": 10,  "read": 0.50 },
+    { "id": "claude-sonnet-5-5", "name": "Sonnet 5.5", "family": "sonnet", "rank": 55, "input": 2,    "output": 10,  "write5m": 2.5,   "write1h": 4,   "read": 0.10 },
+    { "id": "claude-sonnet-5",   "name": "Sonnet 5",   "family": "sonnet", "rank": 50, "input": 2,    "output": 10,  "write5m": 2.5,   "write1h": 4,   "read": 0.20 },
+    { "id": "claude-sonnet-4-6", "name": "Sonnet 4.6", "family": "sonnet", "rank": 46, "input": 3,    "output": 15,  "write5m": 3.75,  "write1h": 6,   "read": 0.30 },
+    { "id": "claude-sonnet-4-5", "name": "Sonnet 4.5", "family": "sonnet", "rank": 45, "input": 3,    "output": 15,  "write5m": 3.75,  "write1h": 6,   "read": 0.30 },
+    { "id": "claude-haiku-5-5",  "name": "Haiku 5.5",  "family": "haiku",  "rank": 55, "input": 0.10, "output": 0.50, "write5m": 0.125, "write1h": 0.20, "read": 0.01,
+      "longContext": { "threshold": 100000, "input": 0.50, "output": 2.50, "write5m": 0.625, "write1h": 1.00, "read": 0.05 } },
+    { "id": "claude-haiku-4-5",  "name": "Haiku 4.5",  "family": "haiku",  "rank": 45, "input": 1,    "output": 5,   "write5m": 1.25,  "write1h": 2,   "read": 0.10 }
+  ]
+}
