@@ -230,41 +230,12 @@ sealed class PanelWindow : Window
         var display = DisplayArea.GetFromPoint(new PointInt32(cursor.X, cursor.Y), DisplayAreaFallback.Nearest);
         var work = display.WorkArea;
         var outer = display.OuterBounds;
-        var scale = MonitorScale(cursor);
-        var w = (int)(PanelWidth * scale);
-        var h = (int)Math.Min(MaxHeight * scale, work.Height - 24 * scale);
-        var margin = (int)(12 * scale);
-        // Clicked from the tray: open by the pointer. Opened any other way (Start menu, a notification):
-        // open at the tray corner, where Windows' own flyouts appear, not wherever the pointer happens to be.
-        var onTaskbar = cursor.X < work.X || cursor.X >= work.X + work.Width || cursor.Y < work.Y || cursor.Y >= work.Y + work.Height;
-        if (!onTaskbar)
-        {
-            cursor.X = work.X + work.Width;
-            cursor.Y = work.Y + work.Height;
-        }
-
-        int x, y;
-        if (work.Y > outer.Y) // taskbar on top
-        {
-            x = Math.Clamp(cursor.X - w / 2, work.X + margin, work.X + work.Width - w - margin);
-            y = work.Y + margin;
-        }
-        else if (work.X > outer.X) // left
-        {
-            x = work.X + margin;
-            y = Math.Clamp(cursor.Y - h / 2, work.Y + margin, work.Y + work.Height - h - margin);
-        }
-        else if (work.Width < outer.Width) // right
-        {
-            x = work.X + work.Width - w - margin;
-            y = Math.Clamp(cursor.Y - h / 2, work.Y + margin, work.Y + work.Height - h - margin);
-        }
-        else // bottom (default)
-        {
-            x = Math.Clamp(cursor.X - w / 2, work.X + margin, work.X + work.Width - w - margin);
-            y = work.Y + work.Height - h - margin;
-        }
-        AppWindow.MoveAndResize(new RectInt32(x, y, w, h));
+        var r = Logic.PanelPlacement.Place(
+            new Logic.PixelRect(work.X, work.Y, work.Width, work.Height),
+            new Logic.PixelRect(outer.X, outer.Y, outer.Width, outer.Height),
+            new Logic.PixelPoint(cursor.X, cursor.Y),
+            MonitorScale(cursor), PanelWidth, MaxHeight);
+        AppWindow.MoveAndResize(new RectInt32(r.X, r.Y, r.Width, r.Height));
     }
 
     // MARK: Content
@@ -307,9 +278,7 @@ sealed class PanelWindow : Window
         var busy = st.isScanning || m.Api.isFetching;
         statusDot.Fill = Theme.Brush(busy ? Theme.Coral : Theme.Status(BudgetStatus.UnderBudget));
         statusText.Foreground = Theme.Brush(Theme.TextSecondary);
-        var updated = st.lastUpdatedMs is { } ms
-            ? (DateTime.Now - ms.Local()).TotalSeconds < 60 ? "Updated just now" : $"Updated {(int)(DateTime.Now - ms.Local()).TotalMinutes}m ago"
-            : "Loading…";
+        var updated = Logic.Formats.Updated(st.lastUpdatedMs?.Local(), DateTime.Now);
         var source = m.Settings.dataSource switch
         {
             DataSourceMode.Logs => "local logs",

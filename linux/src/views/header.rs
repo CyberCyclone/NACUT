@@ -3,9 +3,10 @@
 use gtk::prelude::*;
 use nacut_core::forecast::BudgetStatus;
 use nacut_core::views::{ForecastView, LimitView};
+use nacut_core::CurrencyFormat;
 
 use crate::charts;
-use crate::model::{pct, usd, usd_compact, usd_exact, AppModel};
+use crate::model::{pct, usd, usd_exact, AppModel};
 use crate::theme;
 use crate::ui::{self, BoxAdd};
 
@@ -39,7 +40,7 @@ fn cost_header(m: &AppModel, open_settings: &std::rc::Rc<dyn Fn(&str)>) -> gtk::
         let center = ui::vbox(0);
         let p = ui::figure(&pct(f.budget_used_fraction), 13);
         p.set_halign(gtk::Align::Center);
-        let of = ui::dim(&format!("of {}", usd_compact(f.budget)));
+        let of = ui::dim(&format!("of {}", CurrencyFormat::axis(f.budget)));
         of.set_halign(gtk::Align::Center);
         center.add(&p).add(&of);
         let color = if f.budget_used_fraction >= 1.0 { theme::status(BudgetStatus::Exceeded) } else { theme::coral() };
@@ -85,7 +86,7 @@ fn value_badge(multiple: f64, plan: f64) -> gtk::Widget {
     let x = ui::figure(&format!("{multiple:.1}×"), 20);
     x.add_css_class("coral");
     x.set_halign(gtk::Align::Center);
-    let p = ui::dim(&format!("your {} plan", usd_compact(plan)));
+    let p = ui::dim(&format!("your {} plan", CurrencyFormat::axis(plan)));
     p.set_halign(gtk::Align::Center);
     v.add(&x).add(&p);
     v.set_valign(gtk::Align::Center);
@@ -164,7 +165,7 @@ fn limits_header(m: &AppModel) -> gtk::Widget {
         let l = ui::label(&format!("{:.1}× plan", f.spent / snap.settings.plan_price), &["caption-heading", "coral"]);
         let p = ui::pill(&l, "small");
         p.add_css_class("value-badge");
-        p.set_tooltip_text(Some(&format!("API-equivalent value of this cycle's usage compared with your {} subscription", usd_compact(snap.settings.plan_price))));
+        p.set_tooltip_text(Some(&format!("API-equivalent value of this cycle's usage compared with your {} subscription", CurrencyFormat::axis(snap.settings.plan_price))));
         p.set_valign(gtk::Align::Center);
         p.upcast()
     });
@@ -189,4 +190,51 @@ fn limit_ring(l: &LimitView) -> gtk::Widget {
     }
     b.set_tooltip_text(Some(&tip));
     b.upcast()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nacut_core::views::Level;
+
+    fn limit(utilization: f64, projected_at_reset: Option<f64>) -> LimitView {
+        LimitView {
+            id: "five_hour".into(),
+            label: "5-hour session".into(),
+            short_label: "5h".into(),
+            title: "5-hour session".into(),
+            utilization,
+            resets_at_ms: Some(0),
+            reset_text: "resets in 4h 35m".into(),
+            projected_at_reset,
+            projected_hit_ms: None,
+            subtitle: "resets in 4h 35m".into(),
+            level: Level::for_utilization(utilization),
+        }
+    }
+
+    #[test]
+    fn help_text_without_pace() {
+        assert_eq!(help_text(&limit(0.42, None)), "5-hour session: 42% used. resets in 4h 35m.");
+    }
+
+    #[test]
+    fn help_text_with_pace() {
+        assert_eq!(help_text(&limit(0.42, Some(0.951))), "5-hour session: 42% used. resets in 4h 35m. On pace for 95% by reset.");
+    }
+
+    #[test]
+    fn help_text_extremes() {
+        assert_eq!(help_text(&limit(0.0, Some(0.0))), "5-hour session: 0% used. resets in 4h 35m. On pace for 0% by reset.");
+        assert_eq!(help_text(&limit(-0.0, None)), "5-hour session: 0% used. resets in 4h 35m.");
+        assert_eq!(help_text(&limit(1.0, Some(1.8))), "5-hour session: 100% used. resets in 4h 35m. On pace for 180% by reset.");
+    }
+
+    #[test]
+    fn help_text_uses_the_full_label() {
+        let mut l = limit(0.15, None);
+        l.id = "seven_day".into();
+        l.label = "Weekly · all models".into();
+        assert!(help_text(&l).starts_with("Weekly · all models: 15% used."));
+    }
 }

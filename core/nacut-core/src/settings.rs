@@ -103,8 +103,13 @@ impl Settings {
     /// Defaults with the account mode and plan price detected from `~/.claude.json`.
     /// Subscriptions also start with plan limits on, since that's what they lead with.
     pub fn detected() -> Self {
+        Self::detected_in(&home_dir())
+    }
+
+    /// [`Settings::detected`] for the given home folder.
+    pub fn detected_in(home: &Path) -> Self {
         let mut s = Settings::default();
-        if let Some((mode, price)) = detect_account(&home_dir().join(".claude.json")) {
+        if let Some((mode, price)) = detect_account(&home.join(".claude.json")) {
             s.account_mode = mode;
             if let Some(p) = price {
                 s.plan_price = p;
@@ -118,6 +123,11 @@ impl Settings {
     /// Accepts a UTF-8 byte-order mark (Windows editors add one). A file that can't be parsed is
     /// renamed to `*.invalid.json` rather than overwritten, so hand edits aren't lost.
     pub fn load(path: &Path) -> Self {
+        Self::load_in(path, &home_dir())
+    }
+
+    /// [`Settings::load`], detecting first-run defaults from the given home folder.
+    pub fn load_in(path: &Path, home: &Path) -> Self {
         let data = std::fs::read(path).ok();
         let parsed = data.as_deref().and_then(Self::parse);
         match parsed {
@@ -129,7 +139,7 @@ impl Settings {
                 if data.is_some() {
                     let _ = std::fs::rename(path, path.with_extension("invalid.json"));
                 }
-                let s = Self::detected();
+                let s = Self::detected_in(home);
                 let _ = s.save(path);
                 s
             }
@@ -249,11 +259,25 @@ mod tests {
     }
 
     #[test]
+    fn parse_accepts_a_byte_order_mark_only_at_the_start() {
+        assert_eq!(Settings::parse(b"\xEF\xBB\xBF{}"), Some(Settings::default()));
+        assert_eq!(Settings::parse(b"{}"), Some(Settings::default()));
+        assert_eq!(Settings::parse(b"\xEF\xBB\xBF\xEF\xBB\xBF{}"), None);
+        assert_eq!(Settings::parse(b""), None);
+        assert_eq!(Settings::parse(b"\xFF\xFE{\x00}\x00"), None);
+    }
+
+    #[test]
+    fn parse_does_not_sanitize() {
+        assert_eq!(Settings::parse(br#"{"cycleStartDay":0}"#).unwrap().cycle_start_day, 0);
+    }
+
+    #[test]
     fn keeps_unparseable_settings_aside() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         std::fs::write(&path, b"{ not json").unwrap();
-        let _ = Settings::load(&path);
+        let _ = Settings::load_in(&path, dir.path());
         assert_eq!(std::fs::read(dir.path().join("settings.invalid.json")).unwrap(), b"{ not json");
         assert!(serde_json::from_slice::<Settings>(&std::fs::read(&path).unwrap()).is_ok());
     }

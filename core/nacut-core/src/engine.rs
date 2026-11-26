@@ -16,7 +16,7 @@ use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::alerts::{test_alert, Alert, AlertLedger};
-use crate::analytics::{status_for, AnalyticsClient, ApiActor, ApiCostData, ConnectionStatus};
+use crate::analytics::{api_epoch, status_for, AnalyticsClient, ApiActor, ApiCostData, ConnectionStatus};
 use crate::cache::{LogCache, CACHE_FILE_NAME};
 use crate::forecast::{BillingCycle, Forecast};
 use crate::insights::{days_ending_at, Insights};
@@ -239,7 +239,9 @@ impl Engine {
             has_api_key: false,
             api_status: ConnectionStatus::NotConfigured,
             api_cache_actor: api_file.as_ref().and_then(|f| f.actor_id.clone()),
-            api_data: api_file.map(|f| f.data),
+            // Caches saved before coverage was clamped can start at the first local record; days before the API's
+            // epoch were never fetched, so they must not count as billed $0.
+            api_data: api_file.map(|f| ApiCostData { coverage_start: f.data.coverage_start.max(api_epoch()), ..f.data }),
             api_actors: Vec::new(),
             is_fetching_api: false,
             ledger: AlertLedger::load(&config.data_dir.join(ALERTS_FILE)),
@@ -910,7 +912,7 @@ fn do_api(inner: &Inner, full: bool) {
                     let mut kept: Vec<_> = old.rows.iter().filter(|r| r.start < from).cloned().collect();
                     kept.extend(rows);
                     rows = kept;
-                    coverage_start = old.coverage_start.min(from);
+                    coverage_start = old.coverage_start.min(from).max(api_epoch());
                 }
             }
             let refreshed_at = fresh.refreshed_at.or_else(|| s.api_data.as_ref().and_then(|d| d.refreshed_at));
@@ -1016,4 +1018,49 @@ fn api_view(s: &State) -> ApiView {
 /// The billing cycle containing now, for hosts that need it before the first snapshot.
 pub fn current_cycle(start_day: u8) -> BillingCycle {
     BillingCycle::containing(Timestamp::now(), start_day, &Cal::system())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_cache_file_shape() {
+        let t: Timestamp = "2026-10-30T00:00:00Z".parse().unwrap();
+        let file = ApiCacheFile {
+            actor_id: Some("u1".into()),
+            data: ApiCostData { rows: vec![], refreshed_at: Some(t), coverage_start: t, coverage_end: t, fetched_at: t },
+        };
+        let v = serde_json::to_value(&file).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "actor_id": "u1",
+                "data": {
+                    "rows": [],
+                    "refreshed_at": "2026-10-30T00:00:00Z",
+                    "coverage_start": "2026-10-30T00:00:00Z",
+                    "coverage_end": "2026-10-30T00:00:00Z",
+                    "fetched_at": "2026-10-30T00:00:00Z"
+                }
+            })
+        );
+        let back: ApiCacheFile = serde_json::from_value(v).unwrap();
+        assert_eq!(back.data, file.data);
+    }
+
+    #[test]
+    fn roots_override_ignores_extra_folders() {
+        let s = Settings { extra_roots: vec!["/x".into()], ..Settings::default() };
+        assert_eq!(compute_roots(&s, Some(&[PathBuf::from("/only")])), [PathBuf::from("/only")]);
+        assert!(compute_roots(&s, Some(&[])).is_empty());
+    }
+
+    #[test]
+    fn extra_folders_follow_the_defaults_once() {
+        let s = Settings { extra_roots: vec!["/extra/a".into(), " /extra/a ".into(), "".into()], include_wsl: false, ..Settings::default() };
+        let roots = compute_roots(&s, None);
+        assert_eq!(roots.len(), LogScanner::default_roots().len() + 1);
+        assert_eq!(roots.last(), Some(&PathBuf::from("/extra/a")));
+    }
 }

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use jiff::civil::Date;
 use jiff::tz::TimeZone;
-use jiff::{Timestamp, ToSpan};
+use jiff::{Span, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::pricing::PriceBook;
@@ -101,12 +101,14 @@ impl Cal {
     }
 }
 
+/// `d` plus `n` days, or `d` unchanged if that leaves the supported calendar.
 pub fn add_days(d: Date, n: i64) -> Date {
-    d.checked_add(n.days()).unwrap_or(d)
+    Span::new().try_days(n).ok().and_then(|s| d.checked_add(s).ok()).unwrap_or(d)
 }
 
+/// `d` plus `n` months (clamped to the month's last day), or `d` unchanged if that leaves the supported calendar.
 pub fn add_months(d: Date, n: i64) -> Date {
-    d.checked_add(n.months()).unwrap_or(d)
+    Span::new().try_months(n).ok().and_then(|s| d.checked_add(s).ok()).unwrap_or(d)
 }
 
 /// Whole days from `a` to `b`.

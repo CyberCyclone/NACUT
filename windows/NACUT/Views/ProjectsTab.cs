@@ -64,7 +64,7 @@ static class ProjectsTab
         }
         var left = Ui.V(2,
             Ui.Text(s.title, 13, FontWeights.Medium),
-            Ui.Secondary($"{s.project} · {s.startMs.Local():MMM d, h:mm tt} · {Duration(s.durationSecs)} · {s.entrypoint}", 11),
+            Ui.Secondary($"{s.project} · {s.startMs.Local():MMM d, h:mm tt} · {Logic.Formats.Duration(s.durationSecs)} · {s.entrypoint}", 11),
             chips);
         var right = Ui.V(2, Ui.Text(s.cost.Usd(), 13, FontWeights.SemiBold), Ui.Secondary($"{s.messages:N0} msgs", 11));
         foreach (var c in right.Children) ((FrameworkElement)c).HorizontalAlignment = HorizontalAlignment.Right;
@@ -74,25 +74,7 @@ static class ProjectsTab
         return row;
     }
 
-    static string Duration(double secs)
-    {
-        var s = (int)secs;
-        if (s < 60) return "<1m";
-        int h = s / 3600, m = s % 3600 / 60;
-        if (h >= 48) return $"{h / 24}d {h % 24}h";
-        return h > 0 ? $"{h}h {m}m" : $"{m}m";
-    }
-
-    public static string Relative(DateTime t)
-    {
-        var d = DateTime.Now - t;
-        if (d.TotalMinutes < 1) return "just now";
-        if (d.TotalHours < 1) return $"{(int)d.TotalMinutes} min ago";
-        if (d.TotalDays < 1) return $"{(int)d.TotalHours} hr ago";
-        if (d.TotalDays < 2) return "yesterday";
-        if (d.TotalDays < 30) return $"{(int)d.TotalDays} days ago";
-        return t.ToString("MMM d");
-    }
+    public static string Relative(DateTime t) => Logic.Formats.Relative(t, DateTime.Now, System.Globalization.CultureInfo.CurrentCulture);
 
     static UIElement HeatmapCard(AppModel m, StatRange range)
     {

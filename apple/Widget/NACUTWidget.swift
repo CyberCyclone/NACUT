@@ -1,3 +1,4 @@
+import NacutKit
 import SwiftUI
 import WidgetKit
 
@@ -19,13 +20,10 @@ struct UsageProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<UsageEntry>) -> Void) {
         let snap = WidgetSnapshot.load()
-        let entry = UsageEntry(date: .now, snapshot: snap ?? .placeholder, isPlaceholder: snap == nil)
+        let now = Date.now
+        let entry = UsageEntry(date: now, snapshot: snap ?? .placeholder, isPlaceholder: snap == nil)
         // Refresh every 15 minutes, or right after a limit resets if that's sooner.
-        var next = Date.now.addingTimeInterval(15 * 60)
-        if let reset = snap?.limits.compactMap(\.resetsAt).filter({ $0 > .now }).min() {
-            next = min(next, reset.addingTimeInterval(5))
-        }
-        completion(Timeline(entries: [entry], policy: .after(next)))
+        completion(Timeline(entries: [entry], policy: .after(WidgetSnapshot.nextRefresh(for: snap, now: now))))
     }
 }
 
@@ -61,19 +59,11 @@ private enum W {
         Color(red: 0.761, green: 0.369, blue: 0.239),
     ]
     static func status(_ s: SnapshotStatus) -> Color {
-        switch s {
-        case .noBudget, .underBudget: return .green
+        switch s.tone {
+        case .good: return .green
         case .tight: return .orange
         case .willExceed: return Color(red: 0.95, green: 0.45, blue: 0.09)
         case .exceeded: return .red
-        }
-    }
-    static func symbol(_ s: SnapshotStatus) -> String {
-        switch s {
-        case .noBudget, .underBudget: return "checkmark.circle.fill"
-        case .tight: return "exclamationmark.circle.fill"
-        case .willExceed: return "exclamationmark.triangle.fill"
-        case .exceeded: return "xmark.octagon.fill"
         }
     }
 }
@@ -143,17 +133,12 @@ private struct SmallView: View {
             Text(WidgetUSD.string(s.cycleSpent))
                 .font(.system(.title3, design: .rounded).weight(.semibold))
                 .monospacedDigit()
-            Label(shortHeadline, systemImage: W.symbol(s.status))
+            Label(s.shortHeadline, systemImage: s.status.symbolName)
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(W.status(s.status))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
-    }
-
-    private var shortHeadline: String {
-        s.budget > 0 ? "→ \(WidgetUSD.string(s.projected)) of \(WidgetUSD.string(s.budget))"
-                     : "→ \(WidgetUSD.string(s.projected)) projected"
     }
 }
 
@@ -189,7 +174,7 @@ private struct MediumView: View {
                 }
                 .font(.callout).monospacedDigit()
                 Spacer(minLength: 0)
-                Label(s.headline, systemImage: W.symbol(s.status))
+                Label(s.headline, systemImage: s.status.symbolName)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(W.status(s.status))
                     .lineLimit(2)
@@ -233,22 +218,18 @@ private struct MiniCalendar: View {
     let s: WidgetSnapshot
 
     var body: some View {
-        let cal = Calendar.current
-        let month = cal.dateInterval(of: .month, for: s.generatedAt)!.start
-        let count = cal.range(of: .day, in: .month, for: month)!.count
-        let lead = (cal.component(.weekday, from: month) - cal.firstWeekday + 7) % 7
-        let maxV = max(s.monthDays.values.max() ?? 0, 0.0001)
-        let today = cal.component(.day, from: s.generatedAt)
-        let cells: [Int?] = Array(repeating: nil, count: lead) + (1...count).map { Optional($0) }
+        let grid = MiniCalendarGrid(date: s.generatedAt, calendar: .current)
+        let maxV = MiniCalendarGrid.scale(s.monthDays)
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 7), spacing: 3) {
-            ForEach(Array(cells.enumerated()), id: \.offset) { _, d in
+            ForEach(Array(grid.cells.enumerated()), id: \.offset) { _, d in
                 if let d {
                     let v = s.monthDays[d] ?? 0
                     let f = v / maxV
+                    let step = v > 0 ? Ramp.index(f, steps: W.ramp.count) : nil
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(v > 0 ? W.ramp[min(Int((f * 5).rounded(.up)) - 1, 4).clamped] : Color.secondary.opacity(0.12))
-                        .overlay(Text("\(d)").font(.system(size: 8)).foregroundStyle(f > 0.6 ? .white : .secondary))
-                        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(d == today ? W.coral : .clear, lineWidth: 1.2))
+                        .fill(step.map { W.ramp[$0] } ?? Color.secondary.opacity(0.12))
+                        .overlay(Text("\(d)").font(.system(size: 8)).foregroundStyle(Ramp.needsLightInk(f) ? .white : .secondary))
+                        .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(d == grid.today ? W.coral : .clear, lineWidth: 1.2))
                         .frame(height: 16)
                 } else {
                     Color.clear.frame(height: 16)
@@ -259,23 +240,6 @@ private struct MiniCalendar: View {
 }
 
 // MARK: - Plan-limit views
-
-private extension WidgetSnapshot.Limit {
-    var title: String {
-        switch label {
-        case "5h": return "5-hour"
-        case "Week": return "Weekly"
-        default: return label
-        }
-    }
-    func resetText(at date: Date) -> String {
-        guard let resetsAt, resetsAt > date else { return "reset" }
-        let secs = resetsAt.timeIntervalSince(date)
-        if secs >= 86_400 { return resetsAt.formatted(.dateTime.weekday(.abbreviated).hour()) }
-        let h = Int(secs) / 3600, m = (Int(secs) % 3600) / 60
-        return h > 0 ? "\(h)h \(m)m" : "\(m)m"
-    }
-}
 
 private func limitColor(_ u: Double) -> Color {
     u >= 0.9 ? .red : u >= 0.7 ? .orange : W.coral
@@ -375,8 +339,4 @@ private struct LimitsLargeView: View {
             Spacer(minLength: 0)
         }
     }
-}
-
-private extension Int {
-    var clamped: Int { Swift.max(self, 0) }
 }

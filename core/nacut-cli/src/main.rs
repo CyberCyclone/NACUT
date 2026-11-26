@@ -14,6 +14,7 @@ use nacut_core::forecast::CurrencyFormat;
 use nacut_core::views::{percent, Level};
 use nacut_core::{Engine, EngineConfig, Settings, StatRange};
 
+#[derive(Debug, PartialEq)]
 struct Args {
     command: String,
     json: bool,
@@ -21,9 +22,19 @@ struct Args {
     roots: Vec<PathBuf>,
 }
 
-fn parse_args() -> Args {
+/// What the command line asks for.
+#[derive(Debug, PartialEq)]
+enum Parsed {
+    Run(Args),
+    Help,
+    Version,
+    /// Not a valid command line: print usage and exit with status 2.
+    Invalid,
+}
+
+fn parse_args(args: impl IntoIterator<Item = String>) -> Parsed {
     let mut a = Args { command: "status".into(), json: false, waybar: false, roots: Vec::new() };
-    let mut it = std::env::args().skip(1);
+    let mut it = args.into_iter();
     let mut command = None;
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -31,22 +42,19 @@ fn parse_args() -> Args {
             "--waybar" => a.waybar = true,
             "--root" => match it.next() {
                 Some(r) => a.roots.push(PathBuf::from(r)),
-                None => usage(2),
+                None => return Parsed::Invalid,
             },
-            "-h" | "--help" | "help" => usage(0),
-            "-V" | "--version" => {
-                println!("nacut {}", env!("CARGO_PKG_VERSION"));
-                std::process::exit(0);
-            }
-            s if s.starts_with('-') => usage(2),
+            "-h" | "--help" | "help" => return Parsed::Help,
+            "-V" | "--version" => return Parsed::Version,
+            s if s.starts_with('-') => return Parsed::Invalid,
             s if command.is_none() => command = Some(s.to_string()),
-            _ => usage(2),
+            _ => return Parsed::Invalid,
         }
     }
     if let Some(c) = command {
         a.command = c;
     }
-    a
+    Parsed::Run(a)
 }
 
 fn usage(code: i32) -> ! {
@@ -76,7 +84,15 @@ fn engine(args: &Args) -> Engine {
 }
 
 fn main() {
-    let args = parse_args();
+    let args = match parse_args(std::env::args().skip(1)) {
+        Parsed::Run(a) => a,
+        Parsed::Help => usage(0),
+        Parsed::Version => {
+            println!("nacut {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        Parsed::Invalid => usage(2),
+    };
     match args.command.as_str() {
         "status" => status(&args),
         "limits" => limits(&args),
@@ -198,5 +214,46 @@ fn summary(args: &Args) {
         if snap.settings.account_mode == nacut_core::settings::AccountMode::Subscription {
             println!("\nCosts are API-equivalent value at list prices; on a subscription you don't pay them.");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Parsed {
+        parse_args(args.iter().map(|s| s.to_string()))
+    }
+
+    fn run(command: &str, json: bool, waybar: bool, roots: &[&str]) -> Parsed {
+        Parsed::Run(Args { command: command.into(), json, waybar, roots: roots.iter().map(PathBuf::from).collect() })
+    }
+
+    #[test]
+    fn status_is_the_default_command() {
+        assert_eq!(parse(&[]), run("status", false, false, &[]));
+    }
+
+    #[test]
+    fn flags_and_roots_in_any_order() {
+        assert_eq!(parse(&["summary", "--json"]), run("summary", true, false, &[]));
+        assert_eq!(parse(&["--waybar", "status"]), run("status", false, true, &[]));
+        assert_eq!(parse(&["--root", "/a", "limits", "--root", "/b"]), run("limits", false, false, &["/a", "/b"]));
+    }
+
+    #[test]
+    fn help_and_version() {
+        for a in ["-h", "--help", "help"] {
+            assert_eq!(parse(&[a]), Parsed::Help);
+        }
+        assert_eq!(parse(&["status", "--version"]), Parsed::Version);
+        assert_eq!(parse(&["-V"]), Parsed::Version);
+    }
+
+    #[test]
+    fn invalid_command_lines() {
+        assert_eq!(parse(&["--root"]), Parsed::Invalid);
+        assert_eq!(parse(&["--nope"]), Parsed::Invalid);
+        assert_eq!(parse(&["status", "summary"]), Parsed::Invalid);
     }
 }

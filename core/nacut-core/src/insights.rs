@@ -56,7 +56,7 @@ impl Insights {
         let prev_cutoff = cal.start_of(prev.start).checked_add(elapsed).unwrap_or(now);
         let prev_to_date: f64 = series
             .iter()
-            .filter(|(k, _)| **k >= prev.start && cal.start_of(**k) < prev_cutoff)
+            .filter(|(k, _)| prev.contains(**k) && cal.start_of(**k) < prev_cutoff)
             .map(|(_, v)| v.cost)
             .sum();
         let this_to_date: f64 = series.iter().filter(|(k, _)| cycle.contains(**k) && **k <= today).map(|(_, v)| v.cost).sum();

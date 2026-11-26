@@ -225,13 +225,16 @@ pub fn month_day(d: Date) -> String {
 pub struct CurrencyFormat;
 
 impl CurrencyFormat {
-    /// `$4.21` under $100, `$1,234` above; `compact` turns ≥ $10k into `$12.3k`.
+    /// `$4.21` under $100, `$1,234` above; `compact` turns ≥ $10k into `$12.3k` and ≥ $1M into `$1.2M`.
     pub fn string(value: f64, compact: bool) -> String {
         let v = if value.is_finite() { value } else { 0.0 };
-        if compact && v.abs() >= 10_000.0 {
-            return format!("${:.1}k", v / 1000.0);
+        // Thresholds compare the value as it would be shown, so $99.996 reads `$100`, not `$100.00`.
+        if compact && rounded(v, 0) >= 10_000.0 {
+            let sign = if v < 0.0 { "-" } else { "" };
+            let a = v.abs();
+            return if rounded(a / 1e3, 1) < 1000.0 { format!("{sign}${:.1}k", a / 1e3) } else { format!("{sign}${:.1}M", a / 1e6) };
         }
-        if v.abs() >= 100.0 {
+        if rounded(v, 2) >= 100.0 {
             return usd(v, 0, 0);
         }
         usd(v, 2, 2)
@@ -242,12 +245,31 @@ impl CurrencyFormat {
         usd(value, 2, 4)
     }
 
+    /// Short chart-axis labels: `$0`, `$4.50`, `$120`, `$1.5k`, `$2.3M`.
+    pub fn axis(value: f64) -> String {
+        let v = if value.is_finite() { value } else { 0.0 };
+        let sign = if v < 0.0 { "-" } else { "" };
+        let a = v.abs();
+        if a == 0.0 {
+            "$0".into()
+        } else if rounded(a, 2) < 10.0 {
+            Self::string(v, false)
+        } else if a.round() < 1000.0 {
+            format!("{sign}${}", a.round())
+        } else if ((a / 1e3) * 10.0).round() / 10.0 < 1000.0 {
+            format!("{sign}${:.1}k", a / 1e3)
+        } else {
+            format!("{sign}${:.1}M", a / 1e6)
+        }
+    }
+
     /// `957.2M`, `1.27B`, `24.1K`.
     pub fn tokens(n: u64) -> String {
         let d = n as f64;
-        if d >= 1e9 {
+        // Thresholds sit where the smaller unit would round up to 1000 (999,950 → `1.0M`, not `1000.0K`).
+        if d >= 999_950_000.0 {
             format!("{:.2}B", d / 1e9)
-        } else if d >= 1e6 {
+        } else if d >= 999_950.0 {
             format!("{:.1}M", d / 1e6)
         } else if d >= 1e3 {
             format!("{:.1}K", d / 1e3)
@@ -255,6 +277,11 @@ impl CurrencyFormat {
             n.to_string()
         }
     }
+}
+
+/// `|v|` rounded to `digits` decimals exactly as `format!` shows it.
+fn rounded(v: f64, digits: usize) -> f64 {
+    format!("{:.*}", digits, v.abs()).parse().unwrap_or(0.0)
 }
 
 /// `-$1,234.50`-style formatting with `min..=max` fraction digits (trailing zeros trimmed down to `min`).

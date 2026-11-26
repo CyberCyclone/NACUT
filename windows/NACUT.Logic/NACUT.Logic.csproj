@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The app's pure UI rules (text, layout maths, widget cards, colors as numbers), kept apart from WinUI,
+       the UniFFI bindings and P/Invoke so NACUT.Tests can run them on any machine without the Rust core.
+       The app passes in everything it reads from the system (clock, culture, registry, screen). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Nacut.Logic</RootNamespace>
+    <AssemblyName>NACUT.Logic</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

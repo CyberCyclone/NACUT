@@ -1,6 +1,7 @@
 import Charts
 import SwiftUI
 import NacutCore
+import NacutKit
 
 struct OverviewTab: View {
     @Environment(AppModel.self) private var model
@@ -180,27 +181,20 @@ struct DailyBarsChart: View {
     @Environment(AppModel.self) private var model
     @State private var selected: Date?
 
-    struct Row: Identifiable {
-        var id: String { "\(date.timeIntervalSince1970)-\(model)" }
-        var date: Date
-        var model: String
-        var cost: Double
-    }
+    typealias Row = DailyBreakdown.Row
 
     var body: some View {
-        let days = model.lastDays(30)
-        let rows: [Row] = days.flatMap { day in
-            var out = day.byModel.map { Row(date: day.day, model: model.displayName($0.key), cost: $0.value) }
-            let rest = day.cost - day.byModel.values.reduce(0, +)
-            if rest > 0.005 { out.append(Row(date: day.day, model: "Other", cost: rest)) }
-            return out
-        }
-        let modelIds = Array(Set(days.flatMap { $0.byModel.keys }))
-            .sorted { (Theme.slotOrder($0), $0) < (Theme.slotOrder($1), $1) }
+        let entries = model.lastDays(30)
+        let days = entries.map { DailyBreakdown.Day(date: $0.day, cost: $0.cost, byModel: $0.byModel) }
+        let rows = DailyBreakdown.rows(days, slotOrder: Theme.slotOrder, displayName: model.displayName)
+        let modelIds = DailyBreakdown.modelIds(days, slotOrder: Theme.slotOrder)
         var domain = modelIds.map { model.displayName($0) }
         var range = modelIds.map { Theme.color(forModel: $0) }
-        if rows.contains(where: { $0.model == "Other" }) { domain.append("Other"); range.append(Theme.other) }
-        let avg = days.map(\.cost).reduce(0, +) / 30
+        if rows.contains(where: { $0.model == DailyBreakdown.otherName }) {
+            domain.append(DailyBreakdown.otherName)
+            range.append(Theme.other)
+        }
+        let avg = entries.map(\.cost).reduce(0, +) / 30
 
         return Card("Last 30 days", trailing: AnyView(Text("avg \(avg.usd)/day").font(.caption).foregroundStyle(.secondary))) {
             if rows.isEmpty {

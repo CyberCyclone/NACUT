@@ -251,13 +251,7 @@ impl Panel {
         let st = &snap.status;
         self.busy.set(st.is_scanning || snap.api.is_fetching);
         self.dot.queue_draw();
-        let updated = match st.last_updated_ms {
-            Some(ms) => {
-                let secs = (jiff::Timestamp::now().as_millisecond() - ms) / 1000;
-                if secs < 60 { "Updated just now".to_string() } else { format!("Updated {}m ago", secs / 60) }
-            }
-            None => "Loading…".into(),
-        };
+        let updated = crate::model::updated_text(jiff::Timestamp::now().as_millisecond(), st.last_updated_ms);
         let source = match snap.settings.data_source {
             DataSourceMode::Logs => "local logs",
             DataSourceMode::Api => "Anthropic API",

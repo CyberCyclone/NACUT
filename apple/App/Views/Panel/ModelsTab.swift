@@ -1,6 +1,7 @@
 import Charts
 import SwiftUI
 import NacutCore
+import NacutKit
 
 struct ModelsTab: View {
     @Environment(AppModel.self) private var model
@@ -71,13 +72,7 @@ struct ModelsTab: View {
     }
 
     private func selectedModel(_ stats: [ModelView]) -> ModelView? {
-        guard let a = selectedAngle else { return nil }
-        var running = 0.0
-        for s in stats {
-            running += s.cost
-            if a <= running { return s }
-        }
-        return nil
+        donutSliceIndex(angle: selectedAngle, values: stats.map(\.cost)).map { stats[$0] }
     }
 }
 

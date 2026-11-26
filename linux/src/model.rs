@@ -146,18 +146,6 @@ pub fn usd_exact(v: f64) -> String {
     CurrencyFormat::exact(v)
 }
 
-pub fn usd_compact(v: f64) -> String {
-    if v == 0.0 {
-        "$0".into()
-    } else if v < 10.0 {
-        usd(v)
-    } else if v < 1000.0 {
-        format!("${}", v.round() as i64)
-    } else {
-        format!("${:.1}k", v / 1000.0)
-    }
-}
-
 pub fn pct(f: f64) -> String {
     views::percent(f)
 }
@@ -166,13 +154,18 @@ pub fn tokens(n: u64) -> String {
     CurrencyFormat::tokens(n)
 }
 
-pub fn local(ms: i64) -> Zoned {
-    Timestamp::from_millisecond(ms).unwrap_or(Timestamp::UNIX_EPOCH).to_zoned(TimeZone::system())
+/// A Unix-milliseconds timestamp in `tz` (out-of-range values show as the epoch).
+fn local(ms: i64, tz: &TimeZone) -> Zoned {
+    Timestamp::from_millisecond(ms).unwrap_or(Timestamp::UNIX_EPOCH).to_zoned(tz.clone())
 }
 
 /// strftime on a Unix-milliseconds timestamp in local time, e.g. `fmt(ms, "%b %-d")`.
 pub fn fmt(ms: i64, pattern: &str) -> String {
-    local(ms).strftime(pattern).to_string()
+    fmt_in(ms, pattern, &TimeZone::system())
+}
+
+fn fmt_in(ms: i64, pattern: &str, tz: &TimeZone) -> String {
+    local(ms, tz).strftime(pattern).to_string()
 }
 
 pub fn today() -> jiff::civil::Date {
@@ -197,15 +190,32 @@ pub fn hour_label(h: u32) -> String {
 }
 
 pub fn relative(ms: i64) -> String {
-    let secs = (Timestamp::now().as_millisecond() - ms) / 1000;
-    match secs {
+    relative_at(Timestamp::now().as_millisecond(), ms, &TimeZone::system())
+}
+
+/// `just now`, `5 min ago`, `3 hr ago`, `yesterday`, `12 days ago`, then the date in `tz`. Future times are "just now".
+pub fn relative_at(now_ms: i64, ms: i64, tz: &TimeZone) -> String {
+    match elapsed_secs(now_ms, ms) {
         s if s < 60 => "just now".into(),
         s if s < 3600 => format!("{} min ago", s / 60),
         s if s < 86_400 => format!("{} hr ago", s / 3600),
         s if s < 2 * 86_400 => "yesterday".into(),
         s if s < 30 * 86_400 => format!("{} days ago", s / 86_400),
-        _ => fmt(ms, "%b %-d"),
+        _ => fmt_in(ms, "%b %-d", tz),
     }
+}
+
+/// Panel footer: `Updated just now`, `Updated 12m ago` (minutes only, like the Mac), or `Loading…` before the first scan.
+pub fn updated_text(now_ms: i64, last_updated_ms: Option<i64>) -> String {
+    match last_updated_ms.map(|ms| elapsed_secs(now_ms, ms)) {
+        Some(s) if s < 60 => "Updated just now".into(),
+        Some(s) => format!("Updated {}m ago", s / 60),
+        None => "Loading…".into(),
+    }
+}
+
+fn elapsed_secs(now_ms: i64, ms: i64) -> i64 {
+    now_ms.saturating_sub(ms) / 1000
 }
 
 pub fn range_title(r: StatRange) -> &'static str {
@@ -243,5 +253,124 @@ pub fn source_title(m: DataSourceMode) -> &'static str {
         DataSourceMode::Logs => "Local logs",
         DataSourceMode::Api => "Anthropic API only",
         DataSourceMode::Hybrid => "Hybrid (API + live logs)",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIN: i64 = 60_000;
+    const HOUR: i64 = 60 * MIN;
+    const DAY: i64 = 24 * HOUR;
+    /// 2026-11-26T12:00:00Z
+    const NOW: i64 = 1_795_694_400_000;
+
+    fn rel(ago_ms: i64) -> String {
+        relative_at(NOW, NOW - ago_ms, &TimeZone::UTC)
+    }
+
+    #[test]
+    fn now_constant_is_what_it_says() {
+        assert_eq!(fmt_in(NOW, "%Y-%m-%d %H:%M", &TimeZone::UTC), "2026-11-26 12:00");
+    }
+
+    #[test]
+    fn relative_buckets() {
+        assert_eq!(rel(0), "just now");
+        assert_eq!(rel(59_999), "just now");
+        assert_eq!(rel(MIN), "1 min ago");
+        assert_eq!(rel(59 * MIN + 59_999), "59 min ago");
+        assert_eq!(rel(HOUR), "1 hr ago");
+        assert_eq!(rel(DAY - 1), "23 hr ago");
+        assert_eq!(rel(DAY), "yesterday");
+        assert_eq!(rel(2 * DAY - 1), "yesterday");
+        assert_eq!(rel(2 * DAY), "2 days ago");
+        assert_eq!(rel(30 * DAY - 1), "29 days ago");
+        assert_eq!(rel(30 * DAY), "Oct 27");
+        assert_eq!(rel(400 * DAY), "Oct 22");
+    }
+
+    #[test]
+    fn relative_future_and_extremes() {
+        assert_eq!(rel(-5 * MIN), "just now");
+        assert_eq!(relative_at(NOW, i64::MAX, &TimeZone::UTC), "just now");
+        // Out of jiff's range: shown as the epoch rather than panicking or overflowing.
+        assert_eq!(relative_at(NOW, i64::MIN, &TimeZone::UTC), "Jan 1");
+        assert_eq!(relative_at(i64::MAX, 0, &TimeZone::UTC), "Jan 1");
+    }
+
+    #[test]
+    fn relative_date_uses_the_time_zone() {
+        let tz = TimeZone::fixed(jiff::tz::offset(-14));
+        // 2026-10-01T05:00Z is still Sep 30 at UTC-14.
+        let ms = 1_790_830_800_000;
+        assert_eq!(fmt_in(ms, "%Y-%m-%d %H:%M", &TimeZone::UTC), "2026-10-01 05:00");
+        assert_eq!(relative_at(NOW, ms, &tz), "Sep 30");
+        assert_eq!(relative_at(NOW, ms, &TimeZone::UTC), "Oct 1");
+    }
+
+    #[test]
+    fn footer_updated_text() {
+        assert_eq!(updated_text(NOW, None), "Loading…");
+        assert_eq!(updated_text(NOW, Some(NOW)), "Updated just now");
+        assert_eq!(updated_text(NOW, Some(NOW + HOUR)), "Updated just now");
+        assert_eq!(updated_text(NOW, Some(NOW - 59_999)), "Updated just now");
+        assert_eq!(updated_text(NOW, Some(NOW - MIN)), "Updated 1m ago");
+        assert_eq!(updated_text(NOW, Some(NOW - 3 * HOUR)), "Updated 180m ago");
+        assert!(updated_text(NOW, Some(i64::MIN)).starts_with("Updated "));
+    }
+
+    #[test]
+    fn fmt_patterns() {
+        assert_eq!(fmt_in(NOW, "%b %-d", &TimeZone::UTC), "Nov 26");
+        assert_eq!(fmt_in(NOW, "%a %b %-d", &TimeZone::UTC), "Thu Nov 26");
+        assert_eq!(fmt_in(NOW + 3 * HOUR + 5 * MIN, "%b %-d, %-I:%M %p", &TimeZone::UTC), "Nov 26, 3:05 PM");
+        assert_eq!(fmt_in(0, "%Y-%m-%d", &TimeZone::UTC), "1970-01-01");
+    }
+
+    #[test]
+    fn hour_labels() {
+        let labels: Vec<String> = (0..24).map(hour_label).collect();
+        assert_eq!(labels[0], "12 am");
+        assert_eq!(labels[1], "1 am");
+        assert_eq!(labels[6], "6 am");
+        assert_eq!(labels[11], "11 am");
+        assert_eq!(labels[12], "12 pm");
+        assert_eq!(labels[13], "1 pm");
+        assert_eq!(labels[18], "6 pm");
+        assert_eq!(labels[23], "11 pm");
+        let mut unique = labels.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 24);
+    }
+
+    #[test]
+    fn day_key_round_trip() {
+        for (y, m, d) in [(2024, 2, 29), (1999, 12, 31), (2026, 1, 1), (2026, 11, 26), (2100, 2, 28)] {
+            let date = jiff::civil::date(y, m, d);
+            let key = key_of(date);
+            assert_eq!(key, DayKey { year: y as i32, month: m as u8, day: d as u8 });
+            assert_eq!(key, DayKey::from(date));
+            assert_eq!(date_of(&key), date);
+        }
+    }
+
+    #[test]
+    fn titles() {
+        assert_eq!(range_title(StatRange::Cycle), "This cycle");
+        assert_eq!(range_title(StatRange::Last30), "30 days");
+        assert_eq!(range_title(StatRange::AllTime), "All time");
+        assert_eq!(account_title(AccountMode::Subscription), "Max / Pro subscription");
+        assert_eq!(account_title(AccountMode::Api), "API pay-as-you-go");
+        assert_eq!(display_title(UsageDisplay::Limits), "Plan limits");
+        assert_eq!(display_title(UsageDisplay::Cost), "API value");
+        assert_eq!(second_title(SecondFigure::Cycle), "This cycle");
+        assert_eq!(second_title(SecondFigure::AllTime), "All time");
+        assert_eq!(second_title(SecondFigure::None), "Hidden");
+        assert_eq!(source_title(DataSourceMode::Logs), "Local logs");
+        assert_eq!(source_title(DataSourceMode::Api), "Anthropic API only");
+        assert_eq!(source_title(DataSourceMode::Hybrid), "Hybrid (API + live logs)");
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import NacutCore
+import NacutKitCore
 
 /// Budget ring: solid arc for spent, faint arc to the projected total.
 struct BudgetRing<Center: View>: View {
@@ -102,16 +103,8 @@ struct LimitGauge: View {
         .padding(8)
         .frame(maxWidth: .infinity)
         .background(.fill.quinary, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .help(limit.helpText)
+        .help(limit.helpText())
         .accessibilityElement(children: .combine)
-    }
-}
-
-extension LimitView {
-    var helpText: String {
-        var s = "\(label): \(utilization.percent) used. \(resetText)."
-        if let p = projectedAtReset { s += " On pace for \(p.percent) by reset." }
-        return s
     }
 }
 

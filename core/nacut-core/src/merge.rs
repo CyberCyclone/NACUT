@@ -176,3 +176,42 @@ fn scaled(mut day: DayCost, r: f64) -> DayCost {
     day.source = if r == 1.0 { CostSource::Logs } else { CostSource::Estimated };
     day
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jiff::civil::date;
+
+    fn data(coverage_start: &str, coverage_end: &str, refreshed: Option<&str>) -> ApiCostData {
+        ApiCostData {
+            rows: Vec::new(),
+            refreshed_at: refreshed.map(|r| r.parse().unwrap()),
+            coverage_start: coverage_start.parse().unwrap(),
+            coverage_end: coverage_end.parse().unwrap(),
+            fetched_at: coverage_end.parse().unwrap(),
+        }
+    }
+
+    #[test]
+    fn complete_days_run_from_the_first_full_day_to_the_refresh_day() {
+        let m = SourceMerger::new(Cal::utc());
+        let full = data("2026-11-10T00:00:00Z", "2026-11-20T00:00:00Z", Some("2026-11-18T12:00:00Z"));
+        assert_eq!(m.complete_days(&full), Some((date(2026, 11, 10), date(2026, 11, 18))));
+        let mid_day = data("2026-11-10T00:00:01Z", "2026-11-20T00:00:00Z", Some("2026-11-18T12:00:00Z"));
+        assert_eq!(m.complete_days(&mid_day), Some((date(2026, 11, 11), date(2026, 11, 18))));
+    }
+
+    #[test]
+    fn complete_days_stop_at_the_coverage_end_when_it_comes_first() {
+        let m = SourceMerger::new(Cal::utc());
+        let d = data("2026-11-10T00:00:00Z", "2026-11-15T06:00:00Z", Some("2026-11-18T12:00:00Z"));
+        assert_eq!(m.complete_days(&d), Some((date(2026, 11, 10), date(2026, 11, 15))));
+    }
+
+    #[test]
+    fn no_complete_days_without_a_refresh_or_a_whole_day() {
+        let m = SourceMerger::new(Cal::utc());
+        assert_eq!(m.complete_days(&data("2026-11-10T00:00:00Z", "2026-11-20T00:00:00Z", None)), None);
+        assert_eq!(m.complete_days(&data("2026-11-10T06:00:00Z", "2026-11-20T00:00:00Z", Some("2026-11-11T12:00:00Z"))), None);
+    }
+}

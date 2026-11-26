@@ -3,11 +3,10 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 use jiff::civil::date;
 use jiff::Timestamp;
-use nacut_core::analytics::{actor_from, AnalyticsClient, ApiCostData, ApiCostRow, ConnectionStatus, HttpRequest, Transport, BETA_HEADER};
+use nacut_core::analytics::{actor_from, AnalyticsClient, ApiCostData, ApiCostRow, ConnectionStatus, BETA_HEADER};
 use nacut_core::forecast::{BillingCycle, BudgetStatus, CurrencyFormat, Forecast};
 use nacut_core::insights::Insights;
 use nacut_core::merge::{DataSourceMode, SourceMerger};
@@ -16,20 +15,9 @@ use nacut_core::record::{project_path, UsageRecord};
 use nacut_core::store::{Cal, CostSource, DailySeries, DayCost, SessionStat, UsageStore};
 use nacut_core::{LogCache, LogScanner, PlanLimit};
 
-fn fixtures() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../shared/fixtures")
-}
+mod common;
 
-fn ts(s: &str) -> Timestamp {
-    s.parse().unwrap()
-}
-
-fn scan_fixtures() -> LogCache {
-    let scanner = LogScanner::new(vec![fixtures().join("proj")]);
-    let mut cache = LogCache::new();
-    cache.merge(scanner.scan(&HashMap::new()));
-    cache
-}
+use common::{fixtures, scan_fixtures, series, ts, Pages, Shared};
 
 // MARK: Parsing
 
@@ -152,10 +140,6 @@ fn aggregates() {
 
 // MARK: Forecast
 
-fn series(pairs: &[(jiff::civil::Date, f64)]) -> DailySeries {
-    pairs.iter().map(|(d, c)| (*d, DayCost::with_cost(*c))).collect()
-}
-
 #[test]
 fn cycle_boundaries() {
     let cal = Cal::utc();
@@ -212,27 +196,6 @@ fn insights() {
 }
 
 // MARK: API
-
-struct Pages {
-    calls: Mutex<Vec<HttpRequest>>,
-    pages: Mutex<Vec<(u16, String)>>,
-}
-
-impl Pages {
-    fn new(pages: Vec<(u16, &str)>) -> std::sync::Arc<Self> {
-        std::sync::Arc::new(Self { calls: Mutex::new(vec![]), pages: Mutex::new(pages.into_iter().map(|(c, b)| (c, b.to_string())).collect()) })
-    }
-}
-
-struct Shared(std::sync::Arc<Pages>);
-
-impl Transport for Shared {
-    fn get(&self, req: &HttpRequest) -> Result<(u16, Vec<u8>), String> {
-        self.0.calls.lock().unwrap().push(req.clone());
-        let (c, b) = self.0.pages.lock().unwrap().remove(0);
-        Ok((c, b.into_bytes()))
-    }
-}
 
 #[test]
 fn paging_cents_and_410_restart() {

@@ -7,13 +7,19 @@ use std::rc::Rc;
 
 use gtk::cairo::Context;
 use gtk::prelude::*;
+use nacut_core::CurrencyFormat;
 
-use crate::model::{fmt, hour_label, usd_compact};
+use crate::model::{fmt, hour_label};
 use crate::theme::{self, Rgb};
 use crate::ui;
 
 const AXIS_LEFT: f64 = 40.0;
 const AXIS_BOTTOM: f64 = 18.0;
+const DAY_MS: i64 = 86_400_000;
+/// Donut hole radius as a fraction of the outer radius.
+const DONUT_INNER: f64 = 0.64;
+const HEAT_LABEL_W: f64 = 30.0;
+const HEAT_ROW_H: f64 = 15.0;
 
 pub fn rounded_rect(cr: &Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
     let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
@@ -53,35 +59,97 @@ fn track(cr: &Context, alpha: f64) {
     theme::ink().set(cr, alpha);
 }
 
-/// "Nice" tick values from 0 to at least `max` (about `count` steps).
-pub fn ticks(max: f64, count: usize) -> Vec<f64> {
-    if max <= 0.0 {
-        return vec![0.0, 1.0];
-    }
-    let raw = max / count as f64;
-    let mag = 10f64.powf(raw.log10().floor());
-    let step = [1.0, 2.0, 2.5, 5.0, 10.0].iter().map(|m| m * mag).find(|s| *s >= raw).unwrap_or(raw);
-    let mut out = vec![];
-    let mut v = 0.0;
-    while v < max + step * 0.999 {
-        out.push(v);
-        v += step;
-    }
-    out
+/// Width of the plot area of a `width`-wide chart (left axis labels, 4px right margin).
+fn plot_width(width: f64) -> f64 {
+    width - AXIS_LEFT - 4.0
 }
 
-/// Grid lines and $ labels; returns (y scale max, plot top, plot height).
+/// x of a timestamp on a time axis that starts at `start_ms` and spans `span_ms` (the left edge if the span is empty).
+fn time_x(ms: i64, start_ms: i64, span_ms: f64, plot_w: f64) -> f64 {
+    if span_ms.is_nan() || span_ms <= 0.0 {
+        return AXIS_LEFT;
+    }
+    AXIS_LEFT + (ms - start_ms) as f64 / span_ms * plot_w
+}
+
+/// y of a value on an axis from 0 at the bottom of the plot to `y_max` at `top`.
+fn value_y(v: f64, y_max: f64, top: f64, plot_h: f64) -> f64 {
+    top + plot_h - v / y_max * plot_h
+}
+
+/// The day (0-based, clamped to the span) nearest to pointer `x` on a time axis spanning `span_ms`.
+fn hover_day(x: f64, plot_w: f64, span_ms: f64) -> i64 {
+    let last = (span_ms / DAY_MS as f64 - 1.0).max(0.0);
+    ((x - AXIS_LEFT) / plot_w * span_ms / DAY_MS as f64).round().clamp(0.0, last) as i64
+}
+
+/// Index of the slot under pointer `x` when `n` equal slots share the plot width.
+fn slot_at(x: f64, plot_w: f64, n: usize) -> Option<usize> {
+    let i = ((x - AXIS_LEFT) / (plot_w / n.max(1) as f64)).floor();
+    (i >= 0.0 && i < n as f64).then_some(i as usize)
+}
+
+/// Left edge and width of bar `i` of `n`, centered in its slot; `bar_width` 0 fills the slot less a 2px gap.
+fn bar_rect(i: usize, n: usize, plot_w: f64, bar_width: f64) -> (f64, f64) {
+    let slot = plot_w / n.max(1) as f64;
+    let bw = if bar_width > 0.0 { bar_width.min(slot - 2.0) } else { (slot - 2.0).max(1.0) };
+    (AXIS_LEFT + i as f64 * slot + (slot - bw) / 2.0, bw)
+}
+
+/// Start and end angle of each value's sector, in degrees clockwise from 12 o'clock.
+fn donut_angles(values: &[f64]) -> Vec<(f64, f64)> {
+    let total = values.iter().sum::<f64>().max(0.0001);
+    let mut a = 0.0;
+    values
+        .iter()
+        .map(|v| {
+            let sweep = v / total * 360.0;
+            let r = (a, a + sweep);
+            a += sweep;
+            r
+        })
+        .collect()
+}
+
+/// The sector under a pointer at (`dx`, `dy`) from the donut's center, if it's on the ring.
+fn donut_hit(dx: f64, dy: f64, outer: f64, angles: &[(f64, f64)]) -> Option<usize> {
+    let r = (dx * dx + dy * dy).sqrt();
+    if r <= outer && r >= outer * DONUT_INNER {
+        let mut a = dy.atan2(dx).to_degrees() + 90.0;
+        if a < 0.0 {
+            a += 360.0;
+        }
+        angles.iter().position(|(a0, a1)| a >= *a0 && a < *a1)
+    } else {
+        None
+    }
+}
+
+/// The (weekday row, hour column) heatmap cell under (`x`, `y`) in a `width`-wide chart.
+fn heat_cell(x: f64, y: f64, width: f64) -> Option<(usize, usize)> {
+    let cell_w = (width - HEAT_LABEL_W) / 24.0;
+    let (c, r) = (((x - HEAT_LABEL_W) / cell_w).floor(), (y / HEAT_ROW_H).floor());
+    ((0.0..24.0).contains(&c) && (0.0..7.0).contains(&r)).then_some((r as usize, c as usize))
+}
+
+/// The rounded square drawn for heatmap cell (`r`, `c`): x, y, width, height.
+fn heat_cell_rect(r: usize, c: usize, width: f64) -> (f64, f64, f64, f64) {
+    let cell_w = (width - HEAT_LABEL_W) / 24.0;
+    (HEAT_LABEL_W + c as f64 * cell_w + 1.5, r as f64 * HEAT_ROW_H + 1.5, cell_w - 3.0, 12.0)
+}
+
+/// Grid lines and $ labels; returns the y scale max.
 fn y_axis(cr: &Context, w: &gtk::DrawingArea, max: f64, width: f64, top: f64, plot_h: f64) -> f64 {
-    let t = ticks(max.max(0.1), 3); // at least 10¢: smaller steps would round to the same cent label
+    let t = nacut_core::views::chart_ticks(max.max(0.1), 3); // at least 10¢: smaller steps would round to the same cent label
     let y_max = *t.last().unwrap();
     for v in &t {
-        let y = top + plot_h - v / y_max * plot_h;
+        let y = value_y(*v, y_max, top, plot_h);
         track(cr, 0.08);
         cr.set_line_width(1.0);
         cr.move_to(AXIS_LEFT, y.round() + 0.5);
         cr.line_to(width - 4.0, y.round() + 0.5);
         let _ = cr.stroke();
-        text(cr, w, &usd_compact(*v), 0.0, y - 7.0, true, AXIS_LEFT - 6.0);
+        text(cr, w, &CurrencyFormat::axis(*v), 0.0, y - 7.0, true, AXIS_LEFT - 6.0);
     }
     y_max
 }
@@ -186,19 +254,18 @@ pub struct LinePoint {
 pub fn cumulative(points: Vec<LinePoint>, start_ms: i64, end_ms: i64, budget: f64, height: i32, tooltip: impl Fn(i64) -> String + 'static) -> gtk::DrawingArea {
     let d = gtk::DrawingArea::builder().content_height(height).hexpand(true).has_tooltip(true).build();
     let hover: Rc<Cell<Option<f64>>> = Rc::new(Cell::new(None));
-    let day_ms = 86_400_000.0;
     let span = (end_ms - start_ms) as f64;
     {
         let hover = hover.clone();
         d.set_draw_func(move |area, cr, w, h| {
             let (w, h) = (w as f64, h as f64);
             let top = 14.0;
-            let plot_w = w - AXIS_LEFT - 4.0;
+            let plot_w = plot_width(w);
             let plot_h = h - AXIS_BOTTOM - top;
             let max = points.iter().map(|p| p.value).fold(budget, f64::max) * 1.05;
             let y_max = y_axis(cr, area, max, w, top, plot_h);
-            let x = |ms: i64| AXIS_LEFT + (ms - start_ms) as f64 / span * plot_w;
-            let y = |v: f64| top + plot_h - v / y_max * plot_h;
+            let x = |ms: i64| time_x(ms, start_ms, span, plot_w);
+            let y = |v: f64| value_y(v, y_max, top, plot_h);
 
             let mut d0 = start_ms;
             while d0 < end_ms {
@@ -206,7 +273,7 @@ pub fn cumulative(points: Vec<LinePoint>, start_ms: i64, end_ms: i64, budget: f6
                     break;
                 }
                 text(cr, area, &fmt(d0, "%b %-d"), x(d0) - 2.0, top + plot_h + 3.0, false, 0.0);
-                d0 += 7 * day_ms as i64;
+                d0 += 7 * DAY_MS;
             }
 
             let coral = theme::coral();
@@ -251,7 +318,7 @@ pub fn cumulative(points: Vec<LinePoint>, start_ms: i64, end_ms: i64, budget: f6
                 cr.move_to(AXIS_LEFT, y(budget).round() + 0.5);
                 cr.line_to(w - 4.0, y(budget).round() + 0.5);
                 let _ = cr.stroke();
-                text(cr, area, &format!("Budget {}", usd_compact(budget)), AXIS_LEFT + 2.0, y(budget) - 15.0, false, 0.0);
+                text(cr, area, &format!("Budget {}", CurrencyFormat::axis(budget)), AXIS_LEFT + 2.0, y(budget) - 15.0, false, 0.0);
             }
             if let Some(hx) = hover.get() {
                 theme::ink().set(cr, 0.3);
@@ -267,10 +334,9 @@ pub fn cumulative(points: Vec<LinePoint>, start_ms: i64, end_ms: i64, budget: f6
         let hover = hover.clone();
         let d2 = d.clone();
         motion.connect_motion(move |_, x, _| {
-            let w = d2.width() as f64;
-            let plot_w = w - AXIS_LEFT - 4.0;
-            let days = ((x - AXIS_LEFT) / plot_w * span / day_ms).round().clamp(0.0, (span / day_ms - 1.0).max(0.0));
-            hover.set(Some(AXIS_LEFT + days * day_ms / span * plot_w));
+            let plot_w = plot_width(d2.width() as f64);
+            let day = hover_day(x, plot_w, span);
+            hover.set(Some(time_x(start_ms + day * DAY_MS, start_ms, span, plot_w)));
             d2.queue_draw();
         });
     }
@@ -284,12 +350,11 @@ pub fn cumulative(points: Vec<LinePoint>, start_ms: i64, end_ms: i64, budget: f6
     }
     d.add_controller(motion);
     d.connect_query_tooltip(move |area, x, _, _, tip| {
-        let plot_w = area.width() as f64 - AXIS_LEFT - 4.0;
         if (x as f64) < AXIS_LEFT {
             return false;
         }
-        let days = ((x as f64 - AXIS_LEFT) / plot_w * span / day_ms).round().clamp(0.0, (span / day_ms - 1.0).max(0.0));
-        tip.set_text(Some(&tooltip(start_ms + (days * day_ms) as i64)));
+        let day = hover_day(x as f64, plot_width(area.width() as f64), span);
+        tip.set_text(Some(&tooltip(start_ms + day * DAY_MS)));
         true
     });
     d
@@ -312,15 +377,13 @@ pub fn stacked_bars(stacks: Vec<Stack>, height: i32, average: Option<f64>, x_lab
         let stacks = stacks.clone();
         d.set_draw_func(move |area, cr, w, h| {
             let (w, h) = (w as f64, h as f64);
-            let plot_w = w - AXIS_LEFT - 4.0;
+            let plot_w = plot_width(w);
             let plot_h = h - AXIS_BOTTOM - top;
             let max = stacks.iter().map(|s| s.parts.iter().map(|p| p.1).sum::<f64>()).fold(0.01, f64::max);
             let y_max = y_axis(cr, area, max, w, top, plot_h);
-            let y = |v: f64| top + plot_h - v / y_max * plot_h;
-            let slot = plot_w / stacks.len().max(1) as f64;
-            let bw = if bar_width > 0.0 { bar_width.min(slot - 2.0) } else { (slot - 2.0).max(1.0) };
+            let y = |v: f64| value_y(v, y_max, top, plot_h);
             for (i, s) in stacks.iter().enumerate() {
-                let x = AXIS_LEFT + i as f64 * slot + (slot - bw) / 2.0;
+                let (x, bw) = bar_rect(i, stacks.len(), plot_w, bar_width);
                 let parts: Vec<&(String, f64, Rgb)> = s.parts.iter().filter(|p| p.1 > 0.0).collect();
                 let mut base = 0.0;
                 for (j, p) in parts.iter().enumerate() {
@@ -355,14 +418,13 @@ pub fn stacked_bars(stacks: Vec<Stack>, height: i32, average: Option<f64>, x_lab
         });
     }
     d.connect_query_tooltip(move |area, x, _, _, tip| {
-        let plot_w = area.width() as f64 - AXIS_LEFT - 4.0;
-        let slot = plot_w / stacks.len().max(1) as f64;
-        let i = ((x as f64 - AXIS_LEFT) / slot).floor();
-        if i < 0.0 || i as usize >= stacks.len() || stacks[i as usize].parts.iter().all(|p| p.1 <= 0.0) {
-            return false;
+        match slot_at(x as f64, plot_width(area.width() as f64), stacks.len()) {
+            Some(i) if !stacks[i].parts.iter().all(|p| p.1 <= 0.0) => {
+                tip.set_text(Some(&tooltip(&stacks[i])));
+                true
+            }
+            _ => false,
         }
-        tip.set_text(Some(&tooltip(&stacks[i as usize])));
-        true
     });
     d
 }
@@ -376,11 +438,11 @@ pub fn grouped_bars(rows: Vec<(i64, f64, f64)>, ca: Rgb, cb: Rgb, height: i32) -
         let rows = rows.clone();
         d.set_draw_func(move |area, cr, w, h| {
             let (w, h) = (w as f64, h as f64);
-            let plot_w = w - AXIS_LEFT - 4.0;
+            let plot_w = plot_width(w);
             let plot_h = h - AXIS_BOTTOM - top;
             let max = rows.iter().map(|r| r.1.max(r.2)).fold(0.01, f64::max);
             let y_max = y_axis(cr, area, max, w, top, plot_h);
-            let y = |v: f64| top + plot_h - v / y_max * plot_h;
+            let y = |v: f64| value_y(v, y_max, top, plot_h);
             let slot = plot_w / rows.len().max(1) as f64;
             let bw = ((slot - 3.0) / 2.0).max(1.0);
             for (i, (day, a, b)) in rows.iter().enumerate() {
@@ -400,12 +462,8 @@ pub fn grouped_bars(rows: Vec<(i64, f64, f64)>, ca: Rgb, cb: Rgb, height: i32) -
         });
     }
     d.connect_query_tooltip(move |area, x, _, _, tip| {
-        let slot = (area.width() as f64 - AXIS_LEFT - 4.0) / rows.len().max(1) as f64;
-        let i = ((x as f64 - AXIS_LEFT) / slot).floor();
-        if i < 0.0 || i as usize >= rows.len() {
-            return false;
-        }
-        let (day, a, b) = rows[i as usize];
+        let Some(i) = slot_at(x as f64, plot_width(area.width() as f64), rows.len()) else { return false };
+        let (day, a, b) = rows[i];
         tip.set_text(Some(&format!("{}\nBilled {} · Local {}", fmt(day, "%a %b %-d"), crate::model::usd(a), crate::model::usd(b))));
         true
     });
@@ -418,19 +476,7 @@ pub fn grouped_bars(rows: Vec<(i64, f64, f64)>, ca: Rgb, cb: Rgb, height: i32) -
 pub fn donut(items: Vec<(String, f64, Rgb)>, size: i32, total_label: String) -> gtk::Overlay {
     let d = gtk::DrawingArea::builder().content_width(size).content_height(size).build();
     let selected: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
-    let total = items.iter().map(|i| i.1).sum::<f64>().max(0.0001);
-    let angles: Rc<Vec<(f64, f64)>> = Rc::new({
-        let mut a = 0.0;
-        items
-            .iter()
-            .map(|i| {
-                let sweep = i.1 / total * 360.0;
-                let r = (a, a + sweep);
-                a += sweep;
-                r
-            })
-            .collect()
-    });
+    let angles: Rc<Vec<(f64, f64)>> = Rc::new(donut_angles(&items.iter().map(|i| i.1).collect::<Vec<_>>()));
     {
         let selected = selected.clone();
         let angles = angles.clone();
@@ -439,7 +485,7 @@ pub fn donut(items: Vec<(String, f64, Rgb)>, size: i32, total_label: String) -> 
         d.set_draw_func(move |_, cr, w, h| {
             let c = (w as f64 / 2.0, h as f64 / 2.0);
             let outer = w.min(h) as f64 / 2.0;
-            let inner = outer * 0.64;
+            let inner = outer * DONUT_INNER;
             for (i, (a0, a1)) in angles.iter().enumerate() {
                 if a1 - a0 <= 0.0 {
                     continue;
@@ -475,23 +521,13 @@ pub fn donut(items: Vec<(String, f64, Rgb)>, size: i32, total_label: String) -> 
         let total_label = total_label.clone();
         let size = size as f64;
         motion.connect_motion(move |_, x, y| {
-            let (dx, dy) = (x - size / 2.0, y - size / 2.0);
-            let r = (dx * dx + dy * dy).sqrt();
-            let hit = if r <= size / 2.0 && r >= size / 2.0 * 0.64 {
-                let mut a = dy.atan2(dx).to_degrees() + 90.0;
-                if a < 0.0 {
-                    a += 360.0;
-                }
-                angles.iter().position(|(a0, a1)| a >= *a0 && a < *a1)
-            } else {
-                None
-            };
+            let hit = donut_hit(x - size / 2.0, y - size / 2.0, size / 2.0, &angles);
             if hit != selected.get() {
                 selected.set(hit);
                 match hit {
                     Some(i) => {
                         title.set_label(&names[i].0);
-                        value.set_label(&usd_compact(names[i].1));
+                        value.set_label(&CurrencyFormat::axis(names[i].1));
                     }
                     None => {
                         title.set_label("Total");
@@ -548,37 +584,32 @@ pub fn heatmap(grid: Vec<Vec<f64>>, tip: impl Fn(usize, usize) -> String + 'stat
     let days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     let max = grid.iter().flatten().fold(0.0001f64, |a, b| a.max(*b));
     let d = gtk::DrawingArea::builder().content_height(7 * 15).hexpand(true).has_tooltip(true).build();
-    let label_w = 30.0;
     let grid = Rc::new(grid);
     {
         let grid = grid.clone();
         d.set_draw_func(move |area, cr, w, _| {
-            let cell_w = (w as f64 - label_w) / 24.0;
             for r in 0..7 {
-                text(cr, area, days[r], 0.0, r as f64 * 15.0, false, 0.0);
+                text(cr, area, days[r], 0.0, r as f64 * HEAT_ROW_H, false, 0.0);
                 for c in 0..24 {
                     let v = grid.get(r).and_then(|row| row.get(c)).copied().unwrap_or(0.0);
                     match theme::ramp(v / max) {
                         Some(col) if v > 0.0 => col.set(cr, 1.0),
                         _ => track(cr, 0.06),
                     }
-                    rounded_rect(cr, label_w + c as f64 * cell_w + 1.5, r as f64 * 15.0 + 1.5, cell_w - 3.0, 12.0, 2.5);
+                    let (x, y, cw, ch) = heat_cell_rect(r, c, w as f64);
+                    rounded_rect(cr, x, y, cw, ch, 2.5);
                     let _ = cr.fill();
                 }
             }
         });
     }
     d.connect_query_tooltip(move |area, x, y, _, t| {
-        let cell_w = (area.width() as f64 - label_w) / 24.0;
-        let (c, r) = (((x as f64 - label_w) / cell_w).floor(), (y as f64 / 15.0).floor());
-        if c < 0.0 || c >= 24.0 || r < 0.0 || r >= 7.0 {
-            return false;
-        }
-        t.set_text(Some(&tip(r as usize, c as usize)));
+        let Some((r, c)) = heat_cell(x as f64, y as f64, area.width() as f64) else { return false };
+        t.set_text(Some(&tip(r, c)));
         true
     });
     let hours = ui::hbox(0);
-    hours.set_margin_start(label_w as i32);
+    hours.set_margin_start(HEAT_LABEL_W as i32);
     for h in [0, 6, 12, 18] {
         let l = ui::dim(&hour_label(h));
         l.set_hexpand(true);
@@ -631,4 +662,215 @@ pub fn legend_line(name: &str, color: Rgb, dashed: bool, alpha: f64) -> gtk::Box
     b.append(&d);
     b.append(&ui::dim(name));
     b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const START: i64 = 1_793_491_200_000; // 2026-11-01T00:00Z
+    const SPAN_30: f64 = 30.0 * DAY_MS as f64;
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    #[test]
+    fn plot_width_leaves_room_for_the_axis() {
+        assert_eq!(plot_width(400.0), 356.0);
+        assert_eq!(plot_width(AXIS_LEFT + 4.0), 0.0);
+    }
+
+    #[test]
+    fn time_axis() {
+        assert_eq!(time_x(START, START, SPAN_30, 300.0), AXIS_LEFT);
+        assert_eq!(time_x(START + 30 * DAY_MS, START, SPAN_30, 300.0), AXIS_LEFT + 300.0);
+        assert!(close(time_x(START + 15 * DAY_MS, START, SPAN_30, 300.0), AXIS_LEFT + 150.0));
+        assert!(time_x(START - DAY_MS, START, SPAN_30, 300.0) < AXIS_LEFT);
+    }
+
+    #[test]
+    fn time_axis_with_an_empty_span() {
+        assert_eq!(time_x(START + DAY_MS, START, 0.0, 300.0), AXIS_LEFT);
+        assert_eq!(time_x(START, START, -1.0, 300.0), AXIS_LEFT);
+        assert_eq!(time_x(START, START, f64::NAN, 300.0), AXIS_LEFT);
+    }
+
+    #[test]
+    fn value_axis() {
+        assert_eq!(value_y(0.0, 10.0, 6.0, 100.0), 106.0);
+        assert_eq!(value_y(10.0, 10.0, 6.0, 100.0), 6.0);
+        assert_eq!(value_y(5.0, 10.0, 6.0, 100.0), 56.0);
+        assert!(value_y(20.0, 10.0, 6.0, 100.0) < 6.0);
+    }
+
+    #[test]
+    fn y_scale_from_core_ticks_fits_the_data() {
+        for max in [0.1, 0.37, 1.0, 4.2, 17.0, 99.0, 1234.5, 98_765.0] {
+            let ticks = nacut_core::views::chart_ticks(max, 3);
+            let y_max = *ticks.last().unwrap();
+            assert!(y_max >= max, "{max}: {ticks:?}");
+            let y = value_y(max, y_max, 14.0, 200.0);
+            assert!((14.0..=214.0).contains(&y), "{max}");
+        }
+    }
+
+    #[test]
+    fn hover_snaps_to_the_nearest_day() {
+        // 30 days over 300px: 10px a day.
+        assert_eq!(hover_day(AXIS_LEFT, 300.0, SPAN_30), 0);
+        assert_eq!(hover_day(AXIS_LEFT + 4.9, 300.0, SPAN_30), 0);
+        assert_eq!(hover_day(AXIS_LEFT + 5.1, 300.0, SPAN_30), 1);
+        assert_eq!(hover_day(AXIS_LEFT + 123.0, 300.0, SPAN_30), 12);
+        assert_eq!(hover_day(AXIS_LEFT + 291.0, 300.0, SPAN_30), 29);
+    }
+
+    #[test]
+    fn hover_clamps_to_the_span() {
+        assert_eq!(hover_day(0.0, 300.0, SPAN_30), 0);
+        assert_eq!(hover_day(AXIS_LEFT + 300.0, 300.0, SPAN_30), 29);
+        assert_eq!(hover_day(10_000.0, 300.0, SPAN_30), 29);
+        assert_eq!(hover_day(AXIS_LEFT + 150.0, 300.0, DAY_MS as f64), 0);
+    }
+
+    #[test]
+    fn hover_degenerate_inputs_do_not_panic() {
+        assert_eq!(hover_day(f64::NAN, 300.0, SPAN_30), 0);
+        assert_eq!(hover_day(AXIS_LEFT, 0.0, SPAN_30), 0);
+        assert_eq!(hover_day(AXIS_LEFT + 10.0, 0.0, SPAN_30), 29);
+        assert_eq!(hover_day(AXIS_LEFT + 10.0, 300.0, 0.0), 0);
+        assert_eq!(hover_day(AXIS_LEFT + 10.0, 300.0, -SPAN_30), 0);
+        assert_eq!(hover_day(AXIS_LEFT + 10.0, 300.0, f64::NAN), 0);
+    }
+
+    #[test]
+    fn hover_round_trips_every_day() {
+        for plot_w in [120.0, 300.0, 412.0] {
+            for d in 0..30 {
+                let x = time_x(START + d * DAY_MS, START, SPAN_30, plot_w);
+                assert_eq!(hover_day(x, plot_w, SPAN_30), d, "{plot_w} {d}");
+            }
+        }
+    }
+
+    #[test]
+    fn slot_under_the_pointer() {
+        // 30 slots over 300px: 10px each.
+        assert_eq!(slot_at(AXIS_LEFT, 300.0, 30), Some(0));
+        assert_eq!(slot_at(AXIS_LEFT + 9.99, 300.0, 30), Some(0));
+        assert_eq!(slot_at(AXIS_LEFT + 10.0, 300.0, 30), Some(1));
+        assert_eq!(slot_at(AXIS_LEFT + 299.9, 300.0, 30), Some(29));
+        assert_eq!(slot_at(AXIS_LEFT + 300.0, 300.0, 30), None);
+        assert_eq!(slot_at(AXIS_LEFT - 0.1, 300.0, 30), None);
+        assert_eq!(slot_at(AXIS_LEFT + 150.0, 300.0, 1), Some(0));
+    }
+
+    #[test]
+    fn slot_degenerate_inputs() {
+        assert_eq!(slot_at(AXIS_LEFT + 5.0, 300.0, 0), None);
+        assert_eq!(slot_at(f64::NAN, 300.0, 30), None);
+        assert_eq!(slot_at(AXIS_LEFT, 0.0, 30), None);
+        assert_eq!(slot_at(AXIS_LEFT + 5.0, 0.0, 30), None);
+        assert_eq!(slot_at(AXIS_LEFT + 5.0, -10.0, 30), None);
+    }
+
+    #[test]
+    fn bars_are_centered_in_their_slots() {
+        for (n, plot_w, bar_width) in [(24, 240.0, 9.0), (24, 240.0, 0.0), (30, 356.0, 0.0), (7, 100.0, 5.0)] {
+            let slot = plot_w / n as f64;
+            for i in 0..n {
+                let (x, w) = bar_rect(i, n, plot_w, bar_width);
+                assert!(close(x + w / 2.0, AXIS_LEFT + (i as f64 + 0.5) * slot));
+                assert!(w > 0.0 && w <= slot - 2.0);
+                assert_eq!(slot_at(x + w / 2.0, plot_w, n), Some(i));
+            }
+        }
+    }
+
+    #[test]
+    fn bar_widths() {
+        assert_eq!(bar_rect(0, 24, 240.0, 9.0), (41.0, 8.0)); // capped at the slot less 2px
+        assert_eq!(bar_rect(0, 24, 240.0, 5.0), (42.5, 5.0));
+        assert_eq!(bar_rect(1, 24, 240.0, 0.0), (51.0, 8.0));
+        assert_eq!(bar_rect(0, 100, 100.0, 0.0).1, 1.0); // at least 1px
+        assert_eq!(bar_rect(0, 0, 240.0, 0.0), (41.0, 238.0));
+    }
+
+    #[test]
+    fn donut_sectors() {
+        assert!(donut_angles(&[]).is_empty());
+        assert_eq!(donut_angles(&[1.0, 1.0, 2.0]), [(0.0, 90.0), (90.0, 180.0), (180.0, 360.0)]);
+        assert_eq!(donut_angles(&[5.0]), [(0.0, 360.0)]);
+        assert_eq!(donut_angles(&[1.0, 0.0, 3.0]), [(0.0, 90.0), (90.0, 90.0), (90.0, 360.0)]);
+        assert_eq!(donut_angles(&[0.0, 0.0]), [(0.0, 0.0), (0.0, 0.0)]);
+    }
+
+    #[test]
+    fn donut_sectors_are_contiguous() {
+        let a = donut_angles(&[3.2, 0.7, 11.0, 0.01, 5.5]);
+        assert_eq!(a[0].0, 0.0);
+        assert!(a.windows(2).all(|w| w[0].1 == w[1].0));
+        assert!(close(a.last().unwrap().1, 360.0));
+    }
+
+    #[test]
+    fn donut_hit_by_angle() {
+        let quarters = donut_angles(&[1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(donut_hit(0.0, -40.0, 50.0, &quarters), Some(0)); // 12 o'clock
+        assert_eq!(donut_hit(40.0, 0.0, 50.0, &quarters), Some(1)); // 3 o'clock
+        assert_eq!(donut_hit(0.0, 40.0, 50.0, &quarters), Some(2));
+        assert_eq!(donut_hit(-40.0, 0.0, 50.0, &quarters), Some(3));
+        assert_eq!(donut_hit(-40.0, -0.0, 50.0, &quarters), Some(3));
+        assert_eq!(donut_hit(-20.0, -30.0, 50.0, &quarters), Some(3));
+        assert_eq!(donut_hit(-0.001, -40.0, 50.0, &quarters), Some(3)); // just left of 12
+        assert_eq!(donut_hit(25.0, -25.0, 50.0, &quarters), Some(0));
+    }
+
+    #[test]
+    fn donut_hit_by_radius() {
+        let one = donut_angles(&[1.0]);
+        assert_eq!(donut_hit(50.0, 0.0, 50.0, &one), Some(0));
+        assert_eq!(donut_hit(50.01, 0.0, 50.0, &one), None);
+        assert_eq!(donut_hit(32.0, 0.0, 50.0, &one), Some(0));
+        assert_eq!(donut_hit(31.9, 0.0, 50.0, &one), None);
+        assert_eq!(donut_hit(0.0, 0.0, 50.0, &one), None);
+        assert_eq!(donut_hit(f64::NAN, 0.0, 50.0, &one), None);
+        assert_eq!(donut_hit(40.0, 0.0, 50.0, &[]), None);
+    }
+
+    #[test]
+    fn donut_hit_skips_empty_sectors() {
+        let a = donut_angles(&[0.0, 1.0]);
+        assert_eq!(donut_hit(0.0, -40.0, 50.0, &a), Some(1));
+    }
+
+    #[test]
+    fn heatmap_cells() {
+        // 270px wide: 10px per hour after the 30px labels; rows are 15px.
+        assert_eq!(heat_cell(30.0, 0.0, 270.0), Some((0, 0)));
+        assert_eq!(heat_cell(29.9, 0.0, 270.0), None);
+        assert_eq!(heat_cell(45.0, 16.0, 270.0), Some((1, 1)));
+        assert_eq!(heat_cell(269.9, 104.9, 270.0), Some((6, 23)));
+        assert_eq!(heat_cell(270.0, 0.0, 270.0), None);
+        assert_eq!(heat_cell(100.0, 105.0, 270.0), None);
+        assert_eq!(heat_cell(100.0, -0.1, 270.0), None);
+        assert_eq!(heat_cell(f64::NAN, 0.0, 270.0), None);
+        assert_eq!(heat_cell(100.0, f64::NAN, 270.0), None);
+        assert_eq!(heat_cell(100.0, 0.0, HEAT_LABEL_W), None);
+    }
+
+    #[test]
+    fn heatmap_cells_round_trip() {
+        for width in [270.0, 412.0] {
+            for r in 0..7 {
+                for c in 0..24 {
+                    let (x, y, w, h) = heat_cell_rect(r, c, width);
+                    assert!(w > 0.0 && h > 0.0);
+                    assert_eq!(heat_cell(x + w / 2.0, y + h / 2.0, width), Some((r, c)));
+                    assert_eq!(heat_cell(x, y, width), Some((r, c)));
+                    assert_eq!(heat_cell(x + w, y + h, width), Some((r, c)));
+                }
+            }
+        }
+    }
 }

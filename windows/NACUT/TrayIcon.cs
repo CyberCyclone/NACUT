@@ -26,28 +26,29 @@ sealed class TrayIcon : IDisposable
     Icon? current;
 
     /// <summary>
-    /// Whether Windows keeps this icon in the ^ overflow. Explorer records each icon under
-    /// HKCU\Control Panel\NotifyIconSettings with its exe path (WindowsApps paths start with a known-folder
-    /// GUID) and sets IsPromoted = 1 once the user pins it to the taskbar.
+    /// Whether Windows keeps this icon in the ^ overflow, from Explorer's per-icon records under
+    /// HKCU\Control Panel\NotifyIconSettings (see <see cref="Logic.TrayRules.IsInOverflow"/>).
     /// </summary>
     public static bool IsInOverflow()
     {
         try
         {
-            var exe = Environment.ProcessPath;
-            if (exe is null) return false;
-            var tail = Path.Combine(Path.GetFileName(Path.GetDirectoryName(exe)) ?? "", Path.GetFileName(exe));
             using var settings = Registry.CurrentUser.OpenSubKey(@"Control Panel\NotifyIconSettings");
             if (settings is null) return false;
-            foreach (var name in settings.GetSubKeyNames())
-            {
-                using var key = settings.OpenSubKey(name);
-                if (key?.GetValue("ExecutablePath") is string path && path.EndsWith(tail, StringComparison.OrdinalIgnoreCase))
-                    return key.GetValue("IsPromoted") is not int promoted || promoted == 0;
-            }
+            return Logic.TrayRules.IsInOverflow(Environment.ProcessPath, NotifyIconEntries(settings));
         }
         catch (Exception e) { Log.Write($"Tray promotion check failed: {e.Message}"); }
         return false;
+    }
+
+    /// <summary>Each icon's ExecutablePath and IsPromoted values, read lazily so the search stops at a match.</summary>
+    static IEnumerable<(string? ExecutablePath, object? IsPromoted)> NotifyIconEntries(RegistryKey settings)
+    {
+        foreach (var name in settings.GetSubKeyNames())
+        {
+            using var key = settings.OpenSubKey(name);
+            yield return (key?.GetValue("ExecutablePath") as string, key?.GetValue("IsPromoted"));
+        }
     }
 
     public TrayIcon(AppModel model)
@@ -82,7 +83,7 @@ sealed class TrayIcon : IDisposable
         var st = m.Status;
         var text = st.hasLoaded ? st.menuBarText : "NACUT · loading…";
         summary.Text = text;
-        icon.ToolTipText = Truncate(st.hasLoaded ? $"NACUT\n{st.tooltip}" : "NACUT · reading your Claude Code history…", 127);
+        icon.ToolTipText = Logic.Formats.Truncate(st.hasLoaded ? $"NACUT\n{st.tooltip}" : "NACUT · reading your Claude Code history…", 127);
 
         var light = TaskbarIsLight();
         var key = $"{st.gaugeFraction:0.00}|{st.level}|{st.showsLimits}|{light}|{SmallIconSize()}";
@@ -93,8 +94,6 @@ sealed class TrayIcon : IDisposable
         current?.Dispose();
         current = next;
     }
-
-    static string Truncate(string s, int max) => s.Length <= max ? s : s[..(max - 1)] + "…";
 
     /// <summary>Saves the icon as a PNG, enlarged, for screenshots.</summary>
     public static void SavePreview(StatusView st, bool lightTaskbar, string path)
@@ -129,31 +128,29 @@ sealed class TrayIcon : IDisposable
                 Level.Warning => Color.FromArgb(0xF0, 0xA2, 0x3B),
                 _ => Color.FromArgb(0xE5, 0x82, 0x62),
             };
-            var barH = Math.Max(2f, size / 8f);
+            var barH = Logic.TrayRules.BarHeight(size);
             var textArea = new RectangleF(0, -size * 0.04f, size, size - barH - 1);
             using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, FormatFlags = StringFormatFlags.NoWrap };
 
-            if (st.gaugeFraction is { } f)
+            var label = Logic.TrayRules.Label(st.gaugeFraction);
+            if (label.HasGauge && st.gaugeFraction is { } f)
             {
-                var pct = (int)Math.Round(f * 100);
-                var label = pct >= 100 ? "!" : pct.ToString();
-                var fontSize = label.Length >= 2 ? size * 0.62f : size * 0.72f;
-                using var font = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
+                using var font = new Font("Segoe UI", size * label.FontScale, FontStyle.Bold, GraphicsUnit.Pixel);
                 using var textBrush = new SolidBrush(st.level == Level.Normal ? ink : accent);
-                g.DrawString(label, font, textBrush, textArea, format);
+                g.DrawString(label.Text, font, textBrush, textArea, format);
 
                 using var track = new SolidBrush(Color.FromArgb(lightTaskbar ? 60 : 80, ink));
                 using var fill = new SolidBrush(accent);
                 var y = size - barH;
                 FillRounded(g, track, new RectangleF(0.5f, y, size - 1, barH));
-                var w = Math.Max(barH, (size - 1) * (float)Math.Clamp(f, 0, 1));
+                var w = Logic.TrayRules.GaugeWidth(f, size);
                 FillRounded(g, fill, new RectangleF(0.5f, y, w, barH));
             }
             else
             {
-                using var font = new Font("Segoe UI", size * 0.8f, FontStyle.Bold, GraphicsUnit.Pixel);
+                using var font = new Font("Segoe UI", size * label.FontScale, FontStyle.Bold, GraphicsUnit.Pixel);
                 using var brush = new SolidBrush(ink);
-                g.DrawString("$", font, brush, new RectangleF(0, 0, size, size), format);
+                g.DrawString(label.Text, font, brush, new RectangleF(0, 0, size, size), format);
             }
         }
         var handle = bmp.GetHicon();

@@ -29,6 +29,20 @@ jobs:
           xcodegen generate
           xcodebuild -project NACUT.xcodeproj -scheme NACUT -configuration Release \
             -derivedDataPath ../build/DerivedData CODE_SIGN_IDENTITY=- build
+      # Renders every panel tab in light and dark, as AGENTS.md describes for checking UI changes. Failed PNG writes
+      # don't change the exit code, so check that all eight exist.
+      - name: Render smoke test
+        timeout-minutes: 5
+        run: |
+          out="$RUNNER_TEMP/shots"
+          build/DerivedData/Build/Products/Release/NACUT.app/Contents/MacOS/NACUT \
+            --render-to "$out" --limits-json shared/fixtures/limits-live.json
+          ls -l "$out"
+          for tab in Overview Calendar Models Projects; do
+            for scheme in light dark; do
+              test -s "$out/$tab-$scheme.png"
+            done
+          done
       - name: Zip
         run: cd build/DerivedData/Build/Products/Release && ditto -c -k --keepParent NACUT.app NACUT-macOS.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

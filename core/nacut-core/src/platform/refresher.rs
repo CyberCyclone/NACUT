@@ -149,3 +149,29 @@ fn wait(mut cmd: Command) -> bool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn flatpak_is_only_detected_on_linux() {
+        assert!(!in_flatpak());
+    }
+
+    #[test]
+    fn refresh_is_a_single_non_interactive_haiku_turn() {
+        assert_eq!(&ARGS[..3], ["-p", "--model", "haiku"]);
+        assert!(ARGS.contains(&"--no-session-persistence"));
+        let turns = ARGS.iter().position(|a| *a == "--max-turns").map(|i| ARGS[i + 1]);
+        assert_eq!(turns, Some("1"));
+        assert_eq!(ARGS.last(), Some(&"--mcp-config={\"mcpServers\":{}}"));
+    }
+
+    #[test]
+    fn rate_limit_and_timeout() {
+        assert_eq!(MIN_INTERVAL, Duration::from_secs(900));
+        assert_eq!(TIMEOUT, Duration::from_secs(60));
+    }
+}

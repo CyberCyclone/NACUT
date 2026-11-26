@@ -86,7 +86,7 @@ impl Tray {
 
     pub fn update(&self, status: &StatusView) {
         let Some(h) = &self.handle else { return };
-        let key = format!("{:?}|{:?}|{}|{}", status.gauge_fraction.map(|f| (f * 100.0).round()), status.level, status.menu_bar_text, status.tooltip);
+        let key = status_key(status);
         if *self.last_key.borrow() == key {
             return;
         }
@@ -110,17 +110,46 @@ fn render_icons(status: &StatusView) -> Vec<ksni::Icon> {
     [22, 32, 48].iter().map(|s| render(status, *s)).collect()
 }
 
+/// What the tray's icon, title and tooltip depend on; an unchanged key skips the D-Bus update.
+fn status_key(status: &StatusView) -> String {
+    format!("{}|{:?}|{:?}|{}|{}", status.has_loaded, status.gauge_fraction.map(|f| (f * 100.0).round()), status.level, status.menu_bar_text, status.tooltip)
+}
+
+/// The icon's text and font size for a `size`-pixel icon: the gauge percentage ("!" from 100%), or "$" without a gauge.
+fn label_for(status: &StatusView, size: f64) -> (String, f64) {
+    match status.gauge_fraction {
+        Some(f) => {
+            // NaN and negatives read 0, like the Windows tray.
+            let pct = if f.is_nan() { 0 } else { (f.max(0.0) * 100.0).round() as i64 };
+            let label = if pct >= 100 { "!".to_string() } else { pct.to_string() };
+            let font = if label.len() >= 2 { size * 0.62 } else { size * 0.72 };
+            (label, font)
+        }
+        None => ("$".into(), size * 0.8),
+    }
+}
+
+/// Gauge (and warning text) color for a level.
+fn accent(level: Level) -> (f64, f64, f64) {
+    match level {
+        Level::Critical => (0.94, 0.32, 0.32),
+        Level::Warning => (0.94, 0.64, 0.23),
+        Level::Normal => (0.90, 0.51, 0.38),
+    }
+}
+
+/// Height of the gauge bar along the icon's bottom edge.
+fn bar_height(size: f64) -> f64 {
+    (size / 8.0).max(2.0)
+}
+
 /// Draws the icon (white ink: GNOME's top bar is dark in both themes) as ARGB32 in network byte order.
 pub fn render(status: &StatusView, size: i32) -> ksni::Icon {
     let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, size, size).expect("surface");
     {
         let cr = cairo::Context::new(&surface).expect("context");
         let s = size as f64;
-        let accent = match status.level {
-            Level::Critical => (0.94, 0.32, 0.32),
-            Level::Warning => (0.94, 0.64, 0.23),
-            Level::Normal => (0.90, 0.51, 0.38),
-        };
+        let accent = accent(status.level);
         cr.select_font_face("Sans", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
         // Grayscale antialiasing: subpixel (colored) fringes look wrong on a transparent icon.
         if let Ok(mut options) = cairo::FontOptions::new() {
@@ -128,11 +157,10 @@ pub fn render(status: &StatusView, size: i32) -> ksni::Icon {
             options.set_hint_style(cairo::HintStyle::Slight);
             cr.set_font_options(&options);
         }
-        let bar_h = (s / 8.0).max(2.0);
+        let bar_h = bar_height(s);
+        let (label, font_size) = label_for(status, s);
+        cr.set_font_size(font_size);
         if let Some(f) = status.gauge_fraction {
-            let pct = (f * 100.0).round() as i64;
-            let label = if pct >= 100 { "!".to_string() } else { pct.to_string() };
-            cr.set_font_size(if label.len() >= 2 { s * 0.62 } else { s * 0.72 });
             if status.level == Level::Normal {
                 cr.set_source_rgb(1.0, 1.0, 1.0);
             } else {
@@ -144,23 +172,26 @@ pub fn render(status: &StatusView, size: i32) -> ksni::Icon {
             cr.set_source_rgb(accent.0, accent.1, accent.2);
             pill(&cr, 0.5, s - bar_h, ((s - 1.0) * f.clamp(0.0, 1.0)).max(bar_h), bar_h);
         } else {
-            cr.set_font_size(s * 0.8);
             cr.set_source_rgb(1.0, 1.0, 1.0);
-            centered(&cr, "$", s, s);
+            centered(&cr, &label, s, s);
         }
     }
     let stride = surface.stride() as usize;
     let data = surface.data().expect("pixels");
-    let mut argb = Vec::with_capacity((size * size * 4) as usize);
-    for y in 0..size as usize {
-        for x in 0..size as usize {
+    ksni::Icon { width: size, height: size, data: to_network_argb(&data, stride, size as usize, size as usize) }
+}
+
+/// cairo ARGB32 rows (native-endian pixels, `stride` bytes apart) → packed big-endian ARGB, as SNI wants.
+fn to_network_argb(data: &[u8], stride: usize, width: usize, height: usize) -> Vec<u8> {
+    let mut argb = Vec::with_capacity(width * height * 4);
+    for y in 0..height {
+        for x in 0..width {
             let i = y * stride + x * 4;
-            // cairo ARGB32 is native-endian (BGRA bytes on little-endian); SNI wants ARGB big-endian.
             let px = u32::from_ne_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
             argb.extend_from_slice(&px.to_be_bytes());
         }
     }
-    ksni::Icon { width: size, height: size, data: argb }
+    argb
 }
 
 fn centered(cr: &cairo::Context, text: &str, width: f64, height: f64) {
@@ -173,4 +204,168 @@ fn centered(cr: &cairo::Context, text: &str, width: f64, height: f64) {
 fn pill(cr: &cairo::Context, x: f64, y: f64, w: f64, h: f64) {
     crate::charts::rounded_rect(cr, x, y, w, h, h / 2.0);
     let _ = cr.fill();
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    pub(crate) fn status(gauge_fraction: Option<f64>, level: Level) -> StatusView {
+        StatusView {
+            has_loaded: true,
+            is_scanning: false,
+            shows_limits: gauge_fraction.is_some(),
+            menu_bar_text: "5h 42% · Week 15%".into(),
+            tooltip: "5-hour session 42%".into(),
+            gauge_fraction,
+            level,
+            today: 1.25,
+            cycle_spent: 30.0,
+            all_time: 300.0,
+            last_updated_ms: Some(1_795_694_400_000),
+            source_label: "local logs".into(),
+            limits: vec![],
+            limits_error: None,
+            limits_updated_ms: None,
+            limits_verdict: None,
+        }
+    }
+
+    fn label(f: Option<f64>) -> String {
+        label_for(&status(f, Level::Normal), 48.0).0
+    }
+
+    /// Big-endian ARGB of pixel (x, y).
+    fn pixel(icon: &ksni::Icon, x: i32, y: i32) -> [u8; 4] {
+        let i = ((y * icon.width + x) * 4) as usize;
+        icon.data[i..i + 4].try_into().unwrap()
+    }
+
+    fn assert_near(actual: [u8; 4], expected: [u8; 4]) {
+        assert!(actual.iter().zip(expected).all(|(a, e)| (*a as i32 - e as i32).abs() <= 2), "{actual:?} vs {expected:?}");
+    }
+
+    #[test]
+    fn label_is_the_rounded_percentage() {
+        assert_eq!(label(Some(0.0)), "0");
+        assert_eq!(label(Some(0.05)), "5");
+        assert_eq!(label(Some(0.42)), "42");
+        assert_eq!(label(Some(0.994)), "99");
+        assert_eq!(label(Some(-0.004)), "0");
+    }
+
+    #[test]
+    fn label_is_a_bang_from_100_percent() {
+        assert_eq!(label(Some(0.995)), "!");
+        assert_eq!(label(Some(1.0)), "!");
+        assert_eq!(label(Some(1.7)), "!");
+        assert_eq!(label(Some(f64::INFINITY)), "!");
+    }
+
+    #[test]
+    fn label_odd_fractions_do_not_panic() {
+        assert_eq!(label(Some(f64::NAN)), "0");
+        assert_eq!(label(Some(-0.05)), "0");
+        assert_eq!(label(Some(f64::NEG_INFINITY)), "0");
+    }
+
+    #[test]
+    fn dollar_without_a_gauge() {
+        assert_eq!(label_for(&status(None, Level::Normal), 48.0), ("$".to_string(), 48.0 * 0.8));
+    }
+
+    #[test]
+    fn two_digits_use_a_smaller_font() {
+        let size = |f| label_for(&status(Some(f), Level::Normal), 100.0).1;
+        assert_eq!(size(0.42), 62.0);
+        assert_eq!(size(0.07), 72.0);
+        assert_eq!(size(1.0), 72.0);
+    }
+
+    #[test]
+    fn accents_differ_by_level() {
+        let (n, w, c) = (accent(Level::Normal), accent(Level::Warning), accent(Level::Critical));
+        assert!(n != w && w != c && n != c);
+    }
+
+    #[test]
+    fn bar_height_has_a_minimum() {
+        assert_eq!(bar_height(48.0), 6.0);
+        assert_eq!(bar_height(22.0), 2.75);
+        assert_eq!(bar_height(8.0), 2.0);
+        assert_eq!(bar_height(1.0), 2.0);
+    }
+
+    #[test]
+    fn status_key_tracks_what_is_shown() {
+        let base = status(Some(0.42), Level::Normal);
+        assert_eq!(status_key(&base), status_key(&base.clone()));
+        // Changes the icon can't show (a fraction of a percent, the cost totals) keep the key.
+        let mut same = base.clone();
+        same.gauge_fraction = Some(0.4204);
+        same.today = 99.0;
+        same.is_scanning = true;
+        assert_eq!(status_key(&base), status_key(&same));
+        let changes: [fn(&mut StatusView); 6] = [
+            |s| s.gauge_fraction = Some(0.43),
+            |s| s.gauge_fraction = None,
+            |s| s.level = Level::Warning,
+            |s| s.menu_bar_text = "5h 43%".into(),
+            |s| s.tooltip = "other".into(),
+            |s| s.has_loaded = false,
+        ];
+        for change in changes {
+            let mut s = base.clone();
+            change(&mut s);
+            assert_ne!(status_key(&base), status_key(&s), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn network_argb_from_padded_native_rows() {
+        let mut data = vec![];
+        for row in [[0xAA11_2233u32, 0xFF00_0000], [0x0000_0000, 0x8040_2010]] {
+            for px in row {
+                data.extend_from_slice(&px.to_ne_bytes());
+            }
+            data.extend_from_slice(&[9, 9, 9, 9]); // stride padding
+        }
+        let out = to_network_argb(&data, 12, 2, 2);
+        assert_eq!(out, vec![0xAA, 0x11, 0x22, 0x33, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x40, 0x20, 0x10]);
+        assert!(to_network_argb(&[], 0, 0, 0).is_empty());
+    }
+
+    #[test]
+    fn rendered_icon_sizes() {
+        for size in [1, 8, 22, 32, 48, 64] {
+            for st in [status(Some(0.42), Level::Normal), status(Some(1.2), Level::Critical), status(None, Level::Normal)] {
+                let icon = render(&st, size);
+                assert_eq!((icon.width, icon.height), (size, size));
+                assert_eq!(icon.data.len(), (size * size * 4) as usize);
+            }
+        }
+        assert_eq!(render_icons(&status(Some(0.5), Level::Warning)).iter().map(|i| i.width).collect::<Vec<_>>(), [22, 32, 48]);
+    }
+
+    #[test]
+    fn gauge_bar_pixels() {
+        let to_byte = |c: f64| (c * 255.0).round() as u8;
+        // A full gauge: the bar's middle is the opaque accent.
+        let (r, g, b) = accent(Level::Normal);
+        let full = render(&status(Some(1.0), Level::Normal), 48);
+        assert_near(pixel(&full, 24, 45), [255, to_byte(r), to_byte(g), to_byte(b)]);
+        // An empty gauge: only the 32% white track there (premultiplied).
+        let empty = render(&status(Some(0.0), Level::Normal), 48);
+        assert_near(pixel(&empty, 24, 45), [82, 82, 82, 82]);
+        // Half full: accent on the left, track on the right.
+        let (r, g, b) = accent(Level::Critical);
+        let half = render(&status(Some(0.5), Level::Critical), 48);
+        assert_near(pixel(&half, 10, 45), [255, to_byte(r), to_byte(g), to_byte(b)]);
+        assert_near(pixel(&half, 40, 45), [82, 82, 82, 82]);
+        // Nothing is drawn in the corners.
+        for icon in [&full, &empty, &half, &render(&status(None, Level::Normal), 48)] {
+            assert_eq!(pixel(icon, 0, 0), [0, 0, 0, 0]);
+            assert_eq!(pixel(icon, 47, 0), [0, 0, 0, 0]);
+        }
+    }
 }

@@ -1,6 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using Microsoft.Windows.Widgets.Providers;
 using uniffi.nacut;
 using WinRT;
@@ -91,137 +89,25 @@ public sealed class WidgetProvider : IWidgetProvider
 
     // MARK: Cards
 
-    /// <summary>The Adaptive Card template and its data for one widget size.</summary>
+    /// <summary>The Adaptive Card template and its data for one widget size (laid out by <see cref="Logic.WidgetCard"/>).</summary>
     static (string template, string data) Card(AppModel m, string size)
     {
         var st = m.Status;
         var f = m.Forecast;
-        var limits = st.limits.Take(size == "small" ? 2 : 3).Select(l => new JsonObject
-        {
-            ["label"] = l.id == "seven_day" ? "Weekly" : l.label,
-            ["percent"] = l.utilization.Pct(),
-            // Column weights for the bar (Adaptive Cards has no progress element on the Widgets board).
-            ["fill"] = Math.Max((int)Math.Round(Math.Clamp(l.utilization, 0, 1) * 100), 1),
-            ["rest"] = Math.Max(100 - (int)Math.Round(Math.Clamp(l.utilization, 0, 1) * 100), 1),
-            ["detail"] = l.subtitle,
-            ["color"] = l.utilization >= 0.9 ? "attention" : l.utilization >= 0.7 ? "warning" : "accent", // container styles
-        }).ToList();
-        var showLimits = st.showsLimits && limits.Count > 0;
-        var days = m.LastDays(14);
-        var data = new JsonObject
-        {
-            ["showLimits"] = showLimits,
-            ["plan"] = m.Snap.planName,
-            ["limits"] = new JsonArray([.. limits]),
-            ["verdict"] = st.limitsVerdict?.text ?? "",
-            ["cycleLabel"] = f.cycleLabel,
-            ["spent"] = f.spent.Usd(),
-            ["today"] = f.today.Usd(),
-            ["projected"] = f.projected.Usd(),
-            ["headline"] = f.headline,
-            ["apiValue"] = $"API value {f.spent.Usd()} this cycle · {f.today.Usd()} today",
-            ["week"] = new JsonArray([.. days.TakeLast(7).Select(d => (JsonNode)new JsonObject
-            {
-                ["day"] = d.startMs.Local().ToString("ddd"),
-                ["cost"] = d.cost.UsdCompact(),
-            })]),
-            ["updated"] = st.lastUpdatedMs is { } ms ? $"Updated {ms.Local():h:mm tt}" : "Loading…",
-        };
-        return (Template(size), data.ToJsonString());
+        var input = new Logic.WidgetInput(
+            ShowsLimits: st.showsLimits,
+            Plan: m.Snap.planName,
+            Limits: [.. st.limits.Select(l => new Logic.WidgetLimit(l.id, l.label, l.utilization, l.utilization.Pct(), l.subtitle))],
+            Verdict: st.limitsVerdict?.text ?? "",
+            CycleLabel: f.cycleLabel,
+            Spent: f.spent.Usd(),
+            Today: f.today.Usd(),
+            Projected: f.projected.Usd(),
+            Headline: f.headline,
+            Days: [.. m.LastDays(14).Select(d => new Logic.WidgetDay(d.startMs.Local().ToString("ddd"), d.cost.UsdCompact()))],
+            Updated: st.lastUpdatedMs is { } ms ? $"Updated {ms.Local():h:mm tt}" : "Loading…");
+        return (Logic.WidgetCard.Template(size), Logic.WidgetCard.Data(input, size));
     }
-
-    static string Template(string size)
-    {
-        var limitRow = new JsonObject
-        {
-            ["type"] = "Container",
-            ["$data"] = "${limits}",
-            ["spacing"] = "Small",
-            ["items"] = new JsonArray(
-                new JsonObject
-                {
-                    ["type"] = "ColumnSet",
-                    ["columns"] = new JsonArray(
-                        Column("stretch", Text("${label}", weight: "Bolder", size: "Small")),
-                        Column("auto", Text("${percent}", weight: "Bolder", size: "Small"))),
-                },
-                new JsonObject
-                {
-                    ["type"] = "ColumnSet",
-                    ["spacing"] = "Small",
-                    ["columns"] = new JsonArray(
-                        new JsonObject { ["type"] = "Column", ["width"] = "${fill}", ["style"] = "${color}", ["minHeight"] = "6px", ["items"] = new JsonArray() },
-                        new JsonObject { ["type"] = "Column", ["width"] = "${rest}", ["style"] = "emphasis", ["minHeight"] = "6px", ["spacing"] = "None", ["items"] = new JsonArray() }),
-                },
-                Text("${detail}", size: "Small", subtle: true, spacing: "None")),
-        };
-
-        var limitsBody = new JsonArray(
-            Text("Plan usage · ${plan}", size: "Small", subtle: true, weight: "Bolder"),
-            limitRow);
-        if (size != "small")
-        {
-            limitsBody.Add(Text("${verdict}", size: "Small", wrap: true));
-            limitsBody.Add(Text("${apiValue}", size: "Small", subtle: true, wrap: true));
-        }
-
-        var costBody = new JsonArray(
-            Text("${cycleLabel}", size: "Small", subtle: true, weight: "Bolder"),
-            Text("${spent}", size: "ExtraLarge", weight: "Bolder", spacing: "None"),
-            Text("Today ${today}", size: "Small"));
-        if (size != "small")
-        {
-            costBody.Add(Text("${headline}", size: "Small", wrap: true));
-            costBody.Add(new JsonObject
-            {
-                ["type"] = "ColumnSet",
-                ["spacing"] = "Medium",
-                ["columns"] = new JsonArray(new JsonObject
-                {
-                    ["type"] = "Column",
-                    ["$data"] = "${week}",
-                    ["width"] = "stretch",
-                    ["items"] = new JsonArray(
-                        Text("${day}", size: "Small", subtle: true, align: "Center"),
-                        Text("${cost}", size: "Small", weight: "Bolder", align: "Center", spacing: "None")),
-                }),
-            });
-        }
-
-        var body = new JsonArray(
-            new JsonObject { ["type"] = "Container", ["$when"] = "${showLimits}", ["items"] = limitsBody },
-            new JsonObject { ["type"] = "Container", ["$when"] = "${!showLimits}", ["items"] = costBody });
-        if (size == "large") body.Add(Text("${updated}", size: "Small", subtle: true, spacing: "Medium"));
-
-        var card = new JsonObject
-        {
-            ["type"] = "AdaptiveCard",
-            ["$schema"] = "http://adaptivecards.io/schemas/adaptive-card.json",
-            ["version"] = "1.6",
-            ["body"] = body,
-            ["actions"] = size == "small" ? new JsonArray() : new JsonArray(
-                new JsonObject { ["type"] = "Action.Execute", ["title"] = "Open NACUT", ["verb"] = "open" },
-                new JsonObject { ["type"] = "Action.Execute", ["title"] = "Refresh", ["verb"] = "refresh" }),
-        };
-        if (size == "small") card["selectAction"] = new JsonObject { ["type"] = "Action.Execute", ["verb"] = "open" };
-        return card.ToJsonString();
-    }
-
-    static JsonObject Text(string text, string? size = null, string? weight = null, bool subtle = false, bool wrap = false,
-        string? spacing = null, string? align = null)
-    {
-        var o = new JsonObject { ["type"] = "TextBlock", ["text"] = text };
-        if (size is not null) o["size"] = size;
-        if (weight is not null) o["weight"] = weight;
-        if (subtle) o["isSubtle"] = true;
-        if (wrap) o["wrap"] = true;
-        if (spacing is not null) o["spacing"] = spacing;
-        if (align is not null) o["horizontalAlignment"] = align;
-        return o;
-    }
-
-    static JsonObject Column(string width, JsonObject item) =>
-        new() { ["type"] = "Column", ["width"] = width, ["items"] = new JsonArray(item) };
 
     // MARK: COM registration
 

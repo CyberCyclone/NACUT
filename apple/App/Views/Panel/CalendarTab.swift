@@ -1,6 +1,7 @@
 import Charts
 import SwiftUI
 import NacutCore
+import NacutKit
 
 struct CalendarTab: View {
     @Environment(AppModel.self) private var model
@@ -11,22 +12,12 @@ struct CalendarTab: View {
     private var cal: Calendar { .current }
 
     private var months: [Date] {
-        let now = cal.dateInterval(of: .month, for: .now)!.start
-        let first = model.series.keys.min().flatMap { cal.dateInterval(of: .month, for: $0)?.start } ?? now
-        var out: [Date] = []
-        var m = min(first, now)
-        while m <= now {
-            out.append(m)
-            m = cal.date(byAdding: .month, value: 1, to: m)!
-        }
-        return out
+        CalendarMath.months(from: model.series.keys.min(), now: .now, calendar: cal)
     }
 
     /// Scale shared by all months so colors are comparable: the 95th percentile active day.
     private var scaleMax: Double {
-        let costs = model.series.values.map(\.cost).filter { $0 > 0 }.sorted()
-        guard !costs.isEmpty else { return 1 }
-        return max(costs[min(Int(Double(costs.count) * 0.95), costs.count - 1)], 0.01)
+        CalendarMath.scaleMax(model.series.values.map(\.cost))
     }
 
     var body: some View {
@@ -94,10 +85,7 @@ struct CalendarTab: View {
     }
 
     private func step(_ delta: Int, _ months: [Date]) {
-        let current = visibleMonth ?? months.last!
-        guard let i = months.firstIndex(of: current) else { return }
-        let j = min(max(i + delta, 0), months.count - 1)
-        go(to: months[j])
+        if let m = CalendarMath.step(delta, from: visibleMonth, in: months) { go(to: m) }
     }
 }
 
@@ -110,8 +98,8 @@ struct MonthGrid: View {
     private var cal: Calendar { .current }
 
     var body: some View {
-        let days = gridDays()
-        let symbols = weekdaySymbols()
+        let days = CalendarMath.gridDays(month: month, calendar: cal)
+        let symbols = CalendarMath.weekdaySymbols(calendar: cal)
         VStack(spacing: 4) {
             HStack(spacing: 4) {
                 ForEach(symbols, id: \.self) { s in
@@ -133,23 +121,6 @@ struct MonthGrid: View {
             }
         }
         .padding(.horizontal, 1)
-    }
-
-    private func weekdaySymbols() -> [String] {
-        let s = cal.veryShortStandaloneWeekdaySymbols
-        let first = cal.firstWeekday - 1
-        return Array(s[first...] + s[..<first]).enumerated().map { "\($0.element)\(String(repeating: "\u{200B}", count: $0.offset))" }
-    }
-
-    private func gridDays() -> [Date?] {
-        let range = cal.range(of: .day, in: .month, for: month)!
-        let weekday = cal.component(.weekday, from: month)
-        let lead = (weekday - cal.firstWeekday + 7) % 7
-        var out: [Date?] = Array(repeating: nil, count: lead)
-        for d in range { out.append(cal.date(byAdding: .day, value: d - 1, to: month)) }
-        while out.count % 7 != 0 { out.append(nil) }
-        while out.count < 42 { out.append(nil) }
-        return out
     }
 }
 
@@ -209,16 +180,12 @@ struct MonthSummary: View {
     let month: Date
 
     var body: some View {
-        let cal = Calendar.current
-        let interval = cal.dateInterval(of: .month, for: month)!
-        let days = model.series.filter { interval.contains($0.key) && $0.key < interval.end && $0.value.cost > 0 }
-        let total = days.values.reduce(0) { $0 + $1.cost }
-        let busiest = days.max { $0.value.cost < $1.value.cost }
+        let stats = MonthSummaryStats(month: month, costs: model.series.mapValues(\.cost), calendar: .current)
         HStack(spacing: 8) {
-            summary("Month total", total.usd)
-            summary("Avg / active day", days.isEmpty ? "—" : (total / Double(days.count)).usd)
-            summary("Active days", "\(days.count)")
-            summary("Busiest", busiest.map { "\($0.key.formatted(.dateTime.day())) · \($0.value.cost.usdCompact)" } ?? "—")
+            summary("Month total", stats.total.usd)
+            summary("Avg / active day", stats.averagePerActiveDay?.usd ?? "—")
+            summary("Active days", "\(stats.activeDays)")
+            summary("Busiest", stats.busiest.map { "\($0.day.formatted(.dateTime.day())) · \($0.cost.usdCompact)" } ?? "—")
         }
     }
 

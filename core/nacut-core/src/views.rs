@@ -32,7 +32,8 @@ impl From<Date> for DayKey {
 
 impl DayKey {
     pub fn to_date(self) -> Option<Date> {
-        Date::new(self.year as i16, self.month as i8, self.day as i8).ok()
+        let year = i16::try_from(self.year).ok()?;
+        Date::new(year, self.month as i8, self.day as i8).ok()
     }
 }
 
@@ -73,8 +74,66 @@ impl Level {
 
 /// `15%`
 pub fn percent(f: f64) -> String {
+    let f = if f.is_finite() { f } else { 0.0 };
     // `+ 0.0` turns -0.0 (e.g. an empty float sum) into 0.0, so it never prints "-0%".
     format!("{:.0}%", (f * 100.0).round() + 0.0)
+}
+
+/// Fixed model → color-slot registry, so a model keeps its color in every view, filter and app. Each app maps a
+/// slot to its own palette entry; models not listed here use the apps' "other" color.
+pub const MODEL_SLOTS: [&str; 8] = [
+    "claude-opus-5-5",
+    "claude-fable-5-2",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+    "claude-fable-5-1",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-opus-4-8",
+];
+
+/// Color slot of a normalized model id (e.g. `claude-opus-5-5`), or `None` for the "other" color.
+pub fn model_slot(id: &str) -> Option<u32> {
+    MODEL_SLOTS.iter().position(|m| *m == id).map(|i| i as u32)
+}
+
+/// Sort key that puts registered models first, in slot order.
+pub fn model_slot_order(id: &str) -> u32 {
+    model_slot(id).unwrap_or(99)
+}
+
+/// "Nice" chart-axis values from 0 to at least `max`, about `count` steps apart (steps of 1, 2, 2.5 or 5 × 10ⁿ).
+pub fn chart_ticks(max: f64, count: u32) -> Vec<f64> {
+    if !max.is_finite() || max <= 0.0 || count == 0 {
+        return vec![0.0, 1.0];
+    }
+    let raw = max / count as f64;
+    let exp = raw.log10().floor();
+    if !exp.is_finite() {
+        return vec![0.0, max];
+    }
+    let exp = exp as i32;
+    // Divide by an exact power of ten for small steps, so 3 × 0.1 is 0.3, not 0.30000000000000004.
+    let scale = |k: f64| if exp < 0 { k / 10f64.powi(-exp) } else { k * 10f64.powi(exp) };
+    // 20 only matters when `log10` rounds a value just above a power of ten down.
+    let Some(m) = [1.0, 2.0, 2.5, 5.0, 10.0, 20.0].into_iter().find(|m| scale(*m) >= raw) else { return vec![0.0, max] };
+    if !(scale(m).is_finite() && scale(m) > 0.0) {
+        return vec![0.0, max];
+    }
+    // Stop at the first tick at or above `max`, so the top of the axis always covers it.
+    let mut ticks = Vec::new();
+    for i in 0.. {
+        let v = scale(i as f64 * m);
+        if !v.is_finite() {
+            ticks.push(max);
+            break;
+        }
+        ticks.push(v);
+        if v >= max {
+            break;
+        }
+    }
+    ticks
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -181,8 +240,9 @@ pub struct Verdict {
 pub fn limits_verdict(limits: &[PlanLimit], now: Timestamp, cal: &Cal) -> Verdict {
     let v = |status, text: String| Verdict { status, level: Level::for_budget(status), text };
     if let Some(full) = limits.iter().find(|l| l.effective_utilization(now) >= 1.0) {
-        let mut name = limit_name(full);
-        name.replace_range(..1, &name[..1].to_uppercase());
+        let name = limit_name(full);
+        let mut chars = name.chars();
+        let name: String = chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default();
         return v(BudgetStatus::Exceeded, format!("{name} reached · {}", full.reset_text(now, cal)));
     }
     if let Some((l, at)) = limits.iter().filter_map(|l| l.projected_hit(now).map(|h| (l, h))).min_by_key(|(_, h)| *h) {

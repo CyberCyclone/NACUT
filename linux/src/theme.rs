@@ -2,6 +2,7 @@
 //! order, a sequential coral ramp and status colors, each with light and dark steps.
 
 use nacut_core::forecast::BudgetStatus;
+use nacut_core::views::model_slot;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rgb(pub u32);
@@ -30,7 +31,12 @@ pub fn is_dark() -> bool {
 }
 
 fn pick(light: u32, dark: u32) -> Rgb {
-    Rgb(if is_dark() { dark } else { light })
+    pick_for(light, dark, is_dark())
+}
+
+/// The light or dark step of a color.
+fn pick_for(light: u32, dark: u32, dark_theme: bool) -> Rgb {
+    Rgb(if dark_theme { dark } else { light })
 }
 
 pub fn coral() -> Rgb {
@@ -58,29 +64,16 @@ pub fn categorical(slot: usize) -> Rgb {
     pick(l, d)
 }
 
+const OTHER: (u32, u32) = (0x9A9890, 0x6E6D66);
+
 pub fn other() -> Rgb {
-    pick(0x9A9890, 0x6E6D66)
+    pick(OTHER.0, OTHER.1)
 }
 
-/// Fixed model → slot registry so a model keeps its color across every view and filter.
-const MODEL_SLOTS: [&str; 8] = [
-    "claude-opus-5-5",
-    "claude-fable-5-2",
-    "claude-sonnet-5-5",
-    "claude-haiku-5-5",
-    "claude-fable-5-1",
-    "claude-opus-5",
-    "claude-sonnet-5",
-    "claude-opus-4-8",
-];
-
-pub fn slot_order(id: &str) -> usize {
-    MODEL_SLOTS.iter().position(|m| *m == id).unwrap_or(99)
-}
-
+/// A model's color from the core's fixed slot registry, so it matches every view, filter and app.
 pub fn for_model(id: &str) -> Rgb {
-    match MODEL_SLOTS.iter().position(|m| *m == id) {
-        Some(s) => categorical(s),
+    match model_slot(id) {
+        Some(s) => categorical(s as usize),
         None => other(),
     }
 }
@@ -102,11 +95,15 @@ pub const RAMP_LEN: usize = RAMP.len();
 
 /// Sequential coral ramp for magnitude (calendar, heatmap), light → dark. `None` for zero.
 pub fn ramp(fraction: f64) -> Option<Rgb> {
-    if fraction <= 0.0 {
+    ramp_index(fraction).map(ramp_step)
+}
+
+/// Ramp step for a 0…1 magnitude (each step covers a fifth, top step from 0.8 up); `None` for zero, negative or NaN.
+pub fn ramp_index(fraction: f64) -> Option<usize> {
+    if fraction.is_nan() || fraction <= 0.0 {
         return None;
     }
-    let i = ((fraction * RAMP.len() as f64).ceil() as usize).saturating_sub(1);
-    Some(ramp_step(i))
+    Some(((fraction * RAMP.len() as f64).ceil() as usize).saturating_sub(1).min(RAMP.len() - 1))
 }
 
 pub fn status(s: BudgetStatus) -> Rgb {
@@ -179,4 +176,101 @@ pub fn css() -> String {
         s.push_str(&format!(".ramp-{i} {{ background-color: {c}; color: {ink}; }}\n"));
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nacut_core::views::MODEL_SLOTS;
+
+    const ALL_STATUSES: [BudgetStatus; 5] = [BudgetStatus::NoBudget, BudgetStatus::UnderBudget, BudgetStatus::Tight, BudgetStatus::WillExceed, BudgetStatus::Exceeded];
+
+    #[test]
+    fn rgb_channels() {
+        let c = Rgb(0xD97757);
+        assert_eq!(c.r(), 0xD9 as f64 / 255.0);
+        assert_eq!(c.g(), 0x77 as f64 / 255.0);
+        assert_eq!(c.b(), 0x57 as f64 / 255.0);
+        assert_eq!((Rgb(0xFFFFFF).r(), Rgb(0xFFFFFF).g(), Rgb(0xFFFFFF).b()), (1.0, 1.0, 1.0));
+        assert_eq!((Rgb(0).r(), Rgb(0).g(), Rgb(0).b()), (0.0, 0.0, 0.0));
+        assert_eq!((Rgb(0xFF0000).g(), Rgb(0x00FF00).b(), Rgb(0x0000FF).r()), (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn rgb_css_is_zero_padded_lowercase_hex() {
+        assert_eq!(Rgb(0xD97757).css(), "#d97757");
+        assert_eq!(Rgb(0x0000FF).css(), "#0000ff");
+        assert_eq!(Rgb(0).css(), "#000000");
+    }
+
+    #[test]
+    fn pick_for_chooses_the_theme_step() {
+        assert_eq!(pick_for(0x111111, 0x222222, false), Rgb(0x111111));
+        assert_eq!(pick_for(0x111111, 0x222222, true), Rgb(0x222222));
+    }
+
+    #[test]
+    fn ramp_index_boundaries() {
+        assert_eq!(ramp_index(0.0), None);
+        assert_eq!(ramp_index(-0.0), None);
+        assert_eq!(ramp_index(-1.0), None);
+        assert_eq!(ramp_index(f64::NEG_INFINITY), None);
+        assert_eq!(ramp_index(f64::NAN), None);
+        assert_eq!(ramp_index(f64::MIN_POSITIVE), Some(0));
+        assert_eq!(ramp_index(1e-300), Some(0));
+        assert_eq!(ramp_index(0.2), Some(0));
+        assert_eq!(ramp_index(0.2000001), Some(1));
+        assert_eq!(ramp_index(0.5), Some(2));
+        assert_eq!(ramp_index(0.8), Some(3));
+        assert_eq!(ramp_index(0.81), Some(4));
+        assert_eq!(ramp_index(1.0), Some(RAMP_LEN - 1));
+        assert_eq!(ramp_index(1.5), Some(RAMP_LEN - 1));
+        assert_eq!(ramp_index(f64::MAX), Some(RAMP_LEN - 1));
+        assert_eq!(ramp_index(f64::INFINITY), Some(RAMP_LEN - 1));
+    }
+
+    #[test]
+    fn ramp_index_is_monotonic() {
+        let mut last = 0;
+        for i in 1..=1000 {
+            let step = ramp_index(i as f64 / 1000.0).unwrap();
+            assert!(step >= last && step < RAMP_LEN);
+            last = step;
+        }
+        assert_eq!(last, RAMP_LEN - 1);
+    }
+
+    #[test]
+    fn status_icons() {
+        assert_eq!(status_icon(BudgetStatus::NoBudget), "emblem-ok-symbolic");
+        assert_eq!(status_icon(BudgetStatus::UnderBudget), "emblem-ok-symbolic");
+        assert_eq!(status_icon(BudgetStatus::Tight), "dialog-information-symbolic");
+        assert_eq!(status_icon(BudgetStatus::WillExceed), "dialog-warning-symbolic");
+        assert_eq!(status_icon(BudgetStatus::Exceeded), "dialog-error-symbolic");
+    }
+
+    #[test]
+    fn status_classes() {
+        let classes: Vec<&str> = ALL_STATUSES.iter().map(|s| status_class(*s)).collect();
+        assert_eq!(classes, ["good", "good", "tight", "over", "exceeded"]);
+    }
+
+    #[test]
+    fn model_slots_get_distinct_categorical_colors() {
+        let slots: Vec<usize> = MODEL_SLOTS.iter().map(|m| model_slot(m).expect("registered") as usize).collect();
+        assert!(slots.iter().all(|s| *s < CATEGORICAL.len()));
+        for dark in [false, true] {
+            let colors: Vec<Rgb> = slots.iter().map(|s| pick_for(CATEGORICAL[*s].0, CATEGORICAL[*s].1, dark)).collect();
+            for (i, a) in colors.iter().enumerate() {
+                assert!(colors[i + 1..].iter().all(|b| b != a), "{} shares a color", MODEL_SLOTS[i]);
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_models_use_the_other_color() {
+        assert_eq!(model_slot("claude-unknown-9"), None);
+        assert_eq!(model_slot(""), None);
+        assert!(CATEGORICAL.iter().all(|(l, d)| *l != OTHER.0 && *d != OTHER.1));
+    }
 }

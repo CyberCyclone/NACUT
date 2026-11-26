@@ -17,16 +17,11 @@ static class CalendarTab
     public static UIElement Build(AppModel m, double width, Action rebuild)
     {
         var series = m.Series;
-        var thisMonth = new DateOnly(DateTime.Now.Year, DateTime.Now.Month, 1);
-        var first = series.Keys.Count > 0 ? series.Keys.Min() : thisMonth;
-        var months = new List<DateOnly>();
-        for (var mo = new DateOnly(first.Year, first.Month, 1); mo <= thisMonth; mo = mo.AddMonths(1)) months.Add(mo);
-        if (months.Count == 0) months.Add(thisMonth);
+        var months = Logic.CalendarMath.Months(series.Keys, CoreExtensions.Today);
         var current = visibleMonth is { } v && months.Contains(v) ? v : months[^1];
 
         // Scale shared by all months so colors are comparable: the 95th percentile active day.
-        var costs = series.Values.Select(d => d.cost).Where(c => c > 0).OrderBy(c => c).ToList();
-        var scaleMax = costs.Count == 0 ? 1 : Math.Max(costs[Math.Min((int)(costs.Count * 0.95), costs.Count - 1)], 0.01);
+        var scaleMax = Logic.CalendarMath.ScaleMax(series.Values.Select(d => d.cost));
 
         var title = Ui.Text(current.ToString("MMMM yyyy"), 18, FontWeights.SemiBold);
         var todayButton = new Button { Content = "Today", Padding = new Thickness(10, 3, 10, 4), IsEnabled = current != months[^1] };
@@ -55,24 +50,20 @@ static class CalendarTab
 
     static UIElement MonthGrid(AppModel m, DateOnly month, double scaleMax, Dictionary<DateOnly, DayEntry> series, Action rebuild)
     {
-        var culture = CultureInfo.CurrentCulture;
-        var firstDay = (int)culture.DateTimeFormat.FirstDayOfWeek;
+        var layout = Logic.CalendarMath.Layout(month, CultureInfo.CurrentCulture);
         var g = new Grid { ColumnSpacing = 4, RowSpacing = 4, VerticalAlignment = VerticalAlignment.Top };
         for (var c = 0; c < 7; c++) g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         g.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         for (var c = 0; c < 7; c++)
         {
-            var name = culture.DateTimeFormat.ShortestDayNames[(firstDay + c) % 7];
-            var label = Ui.Text(name, 11, FontWeights.Medium, Theme.TextSecondary);
+            var label = Ui.Text(layout.Headers[c], 11, FontWeights.Medium, Theme.TextSecondary);
             label.HorizontalAlignment = HorizontalAlignment.Center;
             Grid.SetColumn(label, c);
             g.Children.Add(label);
         }
-        var lead = ((int)month.DayOfWeek - firstDay + 7) % 7;
-        var count = DateTime.DaysInMonth(month.Year, month.Month);
         for (var r = 0; r < 6; r++) g.RowDefinitions.Add(new RowDefinition { Height = new GridLength(40) });
         var today = CoreExtensions.Today;
-        for (var d = 0; d < count; d++)
+        for (var d = 0; d < layout.Days; d++)
         {
             var day = month.AddDays(d);
             var cell = DayCell(day, series.GetValueOrDefault(day), scaleMax, day == selectedDay, day == today, day > today);
@@ -82,9 +73,9 @@ static class CalendarTab
                 visibleMonth = month;
                 rebuild();
             };
-            var slot = lead + d;
-            Grid.SetRow(cell, 1 + slot / 7);
-            Grid.SetColumn(cell, slot % 7);
+            var (row, column) = Logic.CalendarMath.Cell(layout.Lead, d);
+            Grid.SetRow(cell, row);
+            Grid.SetColumn(cell, column);
             g.Children.Add(cell);
         }
         return g;
@@ -126,16 +117,14 @@ static class CalendarTab
 
     static UIElement MonthSummary(Dictionary<DateOnly, DayEntry> series, DateOnly month)
     {
-        var days = series.Where(kv => kv.Key.Year == month.Year && kv.Key.Month == month.Month && kv.Value.cost > 0).ToList();
-        var total = days.Sum(kv => kv.Value.cost);
-        var busiest = days.OrderByDescending(kv => kv.Value.cost).FirstOrDefault();
+        var s = Logic.CalendarMath.Summary(series.Select(kv => KeyValuePair.Create(kv.Key, kv.Value.cost)), month);
         UIElement Item(string title, string value) => Ui.Box(Ui.V(2, Ui.Secondary(title, 11), Ui.Text(value, 13, FontWeights.SemiBold)), 10, 8, Theme.SubtleFill, stroke: false);
         return Ui.Columns(4, 8,
         [
-            Item("Month total", total.Usd()),
-            Item("Avg / active day", days.Count == 0 ? "—" : (total / days.Count).Usd()),
-            Item("Active days", days.Count.ToString()),
-            Item("Busiest", days.Count == 0 ? "—" : $"{busiest.Key.Day} · {busiest.Value.cost.UsdCompact()}"),
+            Item("Month total", s.Total.Usd()),
+            Item("Avg / active day", s.AveragePerActiveDay is { } avg ? avg.Usd() : "—"),
+            Item("Active days", s.ActiveDays.ToString()),
+            Item("Busiest", s.BusiestDay is { } busiest ? $"{busiest.Day} · {s.BusiestCost.UsdCompact()}" : "—"),
         ]);
     }
 

@@ -180,9 +180,17 @@ linux/     Linux app (GTK4 + libadwaita, Rust) on the core directly
 ## Development
 
 ```bash
-cd core && cargo test                     # core tests (parsing, pricing, forecast, API paging, engine)
-cargo run -p nacut-cli -- summary         # totals and per-model cost from this computer's logs
-cargo run -p nacut-cli -- status --waybar # status-bar JSON (Waybar, Polybar…)
+cd core && cargo test --workspace --locked   # core and CLI tests (parsing, pricing, forecasts, API, engine)
+cargo run -p nacut-cli -- summary            # totals and per-model cost from this computer's logs
+cargo run -p nacut-cli -- status --waybar    # status-bar JSON (Waybar, Polybar…)
+```
+
+Each app's logic has its own unit tests, and CI runs every suite that a change affects:
+
+```bash
+cd linux && cargo test --locked                                    # Linux (needs the GTK headers)
+apple/scripts/build-core.sh && swift test --package-path apple/NacutKit   # macOS
+dotnet test windows/NACUT.Tests/NACUT.Tests.csproj                 # Windows logic (runs on any OS with .NET 10)
 ```
 
 Every app can render its views to PNGs without network or credential access, and without touching the real widget

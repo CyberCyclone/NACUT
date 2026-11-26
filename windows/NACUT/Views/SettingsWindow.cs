@@ -418,7 +418,7 @@ sealed class SettingsWindow : Window
         {
             var key = new PasswordBox { PlaceholderText = "read:analytics or sk-ant-admin… key", MinWidth = 300 };
             var adminWarning = AdminKeyWarning(false);
-            key.PasswordChanged += (_, _) => adminWarning.IsOpen = IsAdminKey(key.Password);
+            key.PasswordChanged += (_, _) => adminWarning.IsOpen = Logic.Formats.IsAdminKey(key.Password);
             var progress = new ProgressRing { IsActive = false, Width = 18, Height = 18 };
             var result = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(4, 2, 0, 0) };
             if (m.Api.state != ApiState.NotConfigured) result.Text = $"⚠ {m.Api.message}";
@@ -429,7 +429,7 @@ sealed class SettingsWindow : Window
                 if (k.Length == 0 || !connect.IsEnabled) return;
                 connect.IsEnabled = false;
                 progress.IsActive = true;
-                var admin = IsAdminKey(k);
+                var admin = Logic.Formats.IsAdminKey(k);
                 var r = await m.SaveApiKeyAsync(k);
                 progress.IsActive = false;
                 connect.IsEnabled = true;
@@ -486,8 +486,6 @@ sealed class SettingsWindow : Window
         p.Children.Add(cacheCard);
         return p;
     }
-
-    static bool IsAdminKey(string key) => key.Trim().StartsWith("sk-ant-admin", StringComparison.Ordinal);
 
     static InfoBar AdminKeyWarning(bool saved) => new()
     {
@@ -615,7 +613,8 @@ sealed class SettingsWindow : Window
         return p;
     }
 
-    static string Fmt(double v) => v < 1 ? "$" + v.ToString("0.###") : "$" + v.ToString("0.##");
+    /// <summary>Dollars with a decimal point in every locale, like the rest of the app's money.</summary>
+    static string Fmt(double v) => Logic.Formats.Price(v, System.Globalization.CultureInfo.InvariantCulture);
 
     async Task EditPrice(string id)
     {
@@ -642,7 +641,7 @@ sealed class SettingsWindow : Window
         if (result == ContentDialogResult.Primary)
         {
             // A cleared NumberBox reads NaN: keep that field's previous rate.
-            static double Keep(double value, double previous) => double.IsFinite(value) ? value : previous;
+            static double Keep(double value, double previous) => Logic.Formats.KeepFinite(value, previous);
             var rates = new Rates(Keep(input.Value, r.input), Keep(output.Value, r.output), Keep(w5.Value, r.write5m),
                 Keep(w1.Value, r.write1h), Keep(read.Value, r.read));
             m.Update(x => x with { priceOverrides = new Dictionary<string, Rates>(x.priceOverrides) { [id] = rates } });
