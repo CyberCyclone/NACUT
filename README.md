@@ -17,6 +17,9 @@ Claude usage from the menu bar or tray: plan limits on a Max or Pro subscription
 - **Alerts:** notifications at 50/80/100% of budget, when the forecast says you'll go over, and when a plan limit passes 90%.
 - **`nacut` CLI:** totals, limits and status-bar output (Waybar, Polybar…) on every platform.
 
+<img width="526" height="865" alt="image" src="https://github.com/user-attachments/assets/93990b7c-d324-46aa-934f-d8a85c4100c8" />
+
+
 ## Where the numbers come from
 
 | Source | What it covers | Setup |
