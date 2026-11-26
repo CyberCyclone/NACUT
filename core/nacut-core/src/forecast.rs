@@ -225,13 +225,14 @@ pub fn month_day(d: Date) -> String {
 pub struct CurrencyFormat;
 
 impl CurrencyFormat {
-    /// `$4.21` under $100, `$1,234` above; `compact` turns ≥ $10k into `$12.3k`.
+    /// `$4.21` under $100, `$1,234` above; `compact` turns ≥ $10k into `$12.3k` and ≥ $1M into `$1.2M`.
     pub fn string(value: f64, compact: bool) -> String {
         let v = if value.is_finite() { value } else { 0.0 };
         // Thresholds compare the value as it would be shown, so $99.996 reads `$100`, not `$100.00`.
         if compact && rounded(v, 0) >= 10_000.0 {
             let sign = if v < 0.0 { "-" } else { "" };
-            return format!("{sign}${:.1}k", v.abs() / 1000.0);
+            let a = v.abs();
+            return if rounded(a / 1e3, 1) < 1000.0 { format!("{sign}${:.1}k", a / 1e3) } else { format!("{sign}${:.1}M", a / 1e6) };
         }
         if rounded(v, 2) >= 100.0 {
             return usd(v, 0, 0);

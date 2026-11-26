@@ -119,7 +119,8 @@ fn status_key(status: &StatusView) -> String {
 fn label_for(status: &StatusView, size: f64) -> (String, f64) {
     match status.gauge_fraction {
         Some(f) => {
-            let pct = (f * 100.0).round() as i64;
+            // NaN and negatives read 0, like the Windows tray.
+            let pct = if f.is_nan() { 0 } else { (f.max(0.0) * 100.0).round() as i64 };
             let label = if pct >= 100 { "!".to_string() } else { pct.to_string() };
             let font = if label.len() >= 2 { size * 0.62 } else { size * 0.72 };
             (label, font)
@@ -264,8 +265,8 @@ pub(crate) mod tests {
     #[test]
     fn label_odd_fractions_do_not_panic() {
         assert_eq!(label(Some(f64::NAN)), "0");
-        assert_eq!(label(Some(-0.05)), "-5");
-        assert_eq!(label(Some(f64::NEG_INFINITY)), i64::MIN.to_string());
+        assert_eq!(label(Some(-0.05)), "0");
+        assert_eq!(label(Some(f64::NEG_INFINITY)), "0");
     }
 
     #[test]

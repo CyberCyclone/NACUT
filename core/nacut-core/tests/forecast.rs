@@ -38,6 +38,18 @@ fn start_day_zero_means_the_first() {
 }
 
 #[test]
+fn cycle_containing_a_moment_uses_the_calendar_day() {
+    let utc = Cal::utc();
+    let c = BillingCycle::containing(ts("2026-11-14T23:30:00Z"), 15, &utc);
+    assert_eq!((c.start, c.end), (date(2026, 10, 15), date(2026, 11, 15)));
+    let c = BillingCycle::containing(ts("2026-11-15T00:00:00Z"), 15, &utc);
+    assert_eq!((c.start, c.end), (date(2026, 11, 15), date(2026, 12, 15)));
+    // 23:30 UTC on the 14th is already the 15th in Sydney (UTC+11).
+    let sydney = Cal::new(TimeZone::fixed(jiff::tz::offset(11)));
+    assert_eq!(BillingCycle::containing(ts("2026-11-14T23:30:00Z"), 15, &sydney).start, date(2026, 11, 15));
+}
+
+#[test]
 fn a_january_date_before_the_start_day_belongs_to_decembers_cycle() {
     let c = BillingCycle::containing_date(date(2027, 1, 10), 15);
     assert_eq!((c.start, c.end), (date(2026, 12, 15), date(2027, 1, 15)));
@@ -304,8 +316,13 @@ fn compact_dollars_switch_to_thousands_at_ten_thousand() {
 }
 
 #[test]
-fn compact_dollars_stay_in_thousands_above_a_million() {
-    assert_eq!(CurrencyFormat::string(1_000_000.0, true), "$1000.0k");
+fn compact_dollars_switch_to_millions_where_thousands_would_read_1000k() {
+    assert_eq!(CurrencyFormat::string(999_949.0, true), "$999.9k");
+    assert_eq!(CurrencyFormat::string(999_950.0, true), "$1.0M");
+    assert_eq!(CurrencyFormat::string(1_000_000.0, true), "$1.0M");
+    assert_eq!(CurrencyFormat::string(1_234_567.0, true), "$1.2M");
+    assert_eq!(CurrencyFormat::string(-2_500_000.0, true), "-$2.5M");
+    assert_eq!(CurrencyFormat::string(1_234_567.0, false), "$1,234,567");
 }
 
 #[test]

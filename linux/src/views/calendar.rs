@@ -197,10 +197,15 @@ fn day_cell(day: Date, entry: Option<&DayEntry>, scale_max: f64, selected: bool,
     b
 }
 
+/// The costliest day; a tie goes to the earliest day, as on the Mac and Windows.
+fn busiest<'a>(days: &[&'a (Date, DayEntry)]) -> Option<&'a (Date, DayEntry)> {
+    days.iter().copied().max_by(|a, b| a.1.cost.total_cmp(&b.1.cost).then(b.0.cmp(&a.0)))
+}
+
 fn month_summary(series: &[(Date, DayEntry)], month: Date) -> gtk::Widget {
     let days: Vec<&(Date, DayEntry)> = series.iter().filter(|(d, e)| d.year() == month.year() && d.month() == month.month() && e.cost > 0.0).collect();
     let total: f64 = days.iter().map(|(_, e)| e.cost).sum();
-    let busiest = days.iter().max_by(|a, b| a.1.cost.total_cmp(&b.1.cost));
+    let busiest = busiest(&days);
     let item = |title: &str, value: &str| -> gtk::Widget {
         let v = ui::vbox(2);
         v.add(&ui::dim(title)).add(&ui::label(value, &["heading", "numeric"]));
@@ -341,5 +346,21 @@ mod tests {
         assert_eq!(fill_class(10.0, 10.0), "ramp-4");
         assert_eq!(fill_class(500.0, 10.0), "ramp-4");
         assert_eq!(fill_class(f64::INFINITY, 10.0), "ramp-4");
+    }
+
+    #[test]
+    fn busiest_tie_goes_to_the_earliest_day() {
+        let day = |d: Date, cost: f64| {
+            let entry = DayEntry { date: d.into(), start_ms: 0, cost, messages: 1, tokens: 1, by_model: Default::default(), source: Default::default() };
+            (d, entry)
+        };
+        let days = [day(date(2026, 11, 4), 7.0), day(date(2026, 11, 12), 3.0), day(date(2026, 11, 20), 7.0)];
+        let refs: Vec<&(Date, DayEntry)> = days.iter().collect();
+        assert_eq!(busiest(&refs).map(|(d, _)| *d), Some(date(2026, 11, 4)));
+        // Order in the slice doesn't matter.
+        let reversed: Vec<&(Date, DayEntry)> = days.iter().rev().collect();
+        assert_eq!(busiest(&reversed).map(|(d, _)| *d), Some(date(2026, 11, 4)));
+        assert_eq!(busiest(&refs[1..2]).map(|(d, _)| *d), Some(date(2026, 11, 12)));
+        assert!(busiest(&[]).is_none());
     }
 }

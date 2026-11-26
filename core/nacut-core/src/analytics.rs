@@ -378,10 +378,14 @@ pub fn actor_from(v: Option<&Value>) -> Option<ApiActor> {
     Some(ApiActor { id, kind: s("type").unwrap_or_else(|| "unknown".into()), display, cost: 0.0 })
 }
 
+/// The first moment the Usage & Cost API has data for: nothing is served before 2026-01-01.
+pub fn api_epoch() -> Timestamp {
+    "2026-01-01T00:00:00Z".parse().expect("valid")
+}
+
 /// The API serves at most 365 days back and nothing before 2026-01-01.
 fn earliest(now: Timestamp) -> Timestamp {
-    let floor: Timestamp = "2026-01-01T00:00:00Z".parse().expect("valid");
-    floor.max(now - SignedDuration::from_hours(364 * 24))
+    api_epoch().max(now - SignedDuration::from_hours(364 * 24))
 }
 
 fn floor_hour(t: Timestamp) -> Timestamp {

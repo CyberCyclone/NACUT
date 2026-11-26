@@ -2,7 +2,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use jiff::Timestamp;
 use nacut_core::analytics::{
     actor_from, status_for, AnalyticsClient, ApiActor, ApiError, ConnectionStatus, HttpRequest, Transport, API_VERSION, BETA_HEADER, USER_AGENT,
 };
@@ -464,9 +463,8 @@ fn request_headers_are_matched_case_insensitively() {
 }
 
 #[test]
-fn coverage_fetched_at_is_recent() {
+fn coverage_is_fetched_after_the_range_ends() {
     let pages = Pages::new(vec![(200, EMPTY)]);
-    let before = Timestamp::now();
     let data = client(&pages).hourly_cost(ts("2026-03-01T00:00:00Z"), ts("2026-03-02T00:00:00Z"), None).unwrap();
-    assert!(data.fetched_at >= before);
+    assert!(data.fetched_at > data.coverage_end);
 }

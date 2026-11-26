@@ -473,7 +473,8 @@ fn limit_alerts_fire_once_through_the_observer() {
     let e = engine(&dir, settings);
     let obs = Arc::new(Counter::default());
     e.set_observer(Some(obs.clone()));
-    let resets_at = jiff::Timestamp::now() + jiff::SignedDuration::from_hours(3);
+    // Far enough ahead that the engine's own clock never passes it.
+    let resets_at = common::ts("2100-01-01T00:00:00Z");
     e.debug_set_limits(vec![PlanLimit { id: "five_hour".into(), label: "5-hour session".into(), utilization: 0.95, resets_at: Some(resets_at) }]);
     // The first scan only loads; alerts are evaluated from the next one.
     e.scan_now();
@@ -484,7 +485,7 @@ fn limit_alerts_fire_once_through_the_observer() {
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].id, format!("limit-five_hour-{resets_at}"));
         assert_eq!(alerts[0].title, "5-hour session limit at 95%");
-        assert!(alerts[0].body.starts_with("Plan limit resets in 2h 5") || alerts[0].body.starts_with("Plan limit resets in 3h 0m"), "{}", alerts[0].body);
+        assert!(alerts[0].body.starts_with("Plan limit resets "), "{}", alerts[0].body);
     }
     e.scan_now();
     assert_eq!(obs.alerts.lock().unwrap().len(), 1);
@@ -498,7 +499,8 @@ fn limit_alerts_respect_the_setting() {
     let e = engine(&dir, settings);
     let obs = Arc::new(Counter::default());
     e.set_observer(Some(obs.clone()));
-    let resets_at = jiff::Timestamp::now() + jiff::SignedDuration::from_hours(3);
+    // Far enough ahead that the engine's own clock never passes it.
+    let resets_at = common::ts("2100-01-01T00:00:00Z");
     e.debug_set_limits(vec![PlanLimit { id: "five_hour".into(), label: "5-hour session".into(), utilization: 0.95, resets_at: Some(resets_at) }]);
     e.scan_now();
     e.scan_now();

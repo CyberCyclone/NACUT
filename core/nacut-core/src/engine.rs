@@ -16,7 +16,7 @@ use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::alerts::{test_alert, Alert, AlertLedger};
-use crate::analytics::{status_for, AnalyticsClient, ApiActor, ApiCostData, ConnectionStatus};
+use crate::analytics::{api_epoch, status_for, AnalyticsClient, ApiActor, ApiCostData, ConnectionStatus};
 use crate::cache::{LogCache, CACHE_FILE_NAME};
 use crate::forecast::{BillingCycle, Forecast};
 use crate::insights::{days_ending_at, Insights};
@@ -239,7 +239,9 @@ impl Engine {
             has_api_key: false,
             api_status: ConnectionStatus::NotConfigured,
             api_cache_actor: api_file.as_ref().and_then(|f| f.actor_id.clone()),
-            api_data: api_file.map(|f| f.data),
+            // Caches saved before coverage was clamped can start at the first local record; days before the API's
+            // epoch were never fetched, so they must not count as billed $0.
+            api_data: api_file.map(|f| ApiCostData { coverage_start: f.data.coverage_start.max(api_epoch()), ..f.data }),
             api_actors: Vec::new(),
             is_fetching_api: false,
             ledger: AlertLedger::load(&config.data_dir.join(ALERTS_FILE)),
@@ -910,7 +912,7 @@ fn do_api(inner: &Inner, full: bool) {
                     let mut kept: Vec<_> = old.rows.iter().filter(|r| r.start < from).cloned().collect();
                     kept.extend(rows);
                     rows = kept;
-                    coverage_start = old.coverage_start.min(from);
+                    coverage_start = old.coverage_start.min(from).max(api_epoch());
                 }
             }
             let refreshed_at = fresh.refreshed_at.or_else(|| s.api_data.as_ref().and_then(|d| d.refreshed_at));
@@ -1060,11 +1062,5 @@ mod tests {
         let roots = compute_roots(&s, None);
         assert_eq!(roots.len(), LogScanner::default_roots().len() + 1);
         assert_eq!(roots.last(), Some(&PathBuf::from("/extra/a")));
-    }
-
-    #[test]
-    fn current_cycle_starts_on_the_given_day() {
-        assert_eq!(current_cycle(15).start.day(), 15);
-        assert_eq!(current_cycle(1).start.day(), 1);
     }
 }
