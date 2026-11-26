@@ -110,18 +110,6 @@ static class Charts
 
     // MARK: Axes
 
-    /// <summary>"Nice" tick values from 0 to at least `max` (about `count` steps).</summary>
-    public static List<double> Ticks(double max, int count = 3)
-    {
-        if (max <= 0) return [0, 1];
-        var raw = max / count;
-        var mag = Math.Pow(10, Math.Floor(Math.Log10(raw)));
-        var step = new[] { 1, 2, 2.5, 5, 10 }.Select(m => m * mag).First(s => s >= raw);
-        var ticks = new List<double>();
-        for (var v = 0.0; v < max + step * 0.999; v += step) ticks.Add(v);
-        return ticks;
-    }
-
     static TextBlock AxisLabel(string s) => new()
     {
         Text = s,
@@ -148,7 +136,7 @@ static class Charts
     /// <summary>Grid lines and $ labels on the leading edge; returns the y scale.</summary>
     static Func<double, double> YAxis(Canvas canvas, double max, double left, double top, double plotW, double plotH)
     {
-        var ticks = Ticks(max);
+        var ticks = uniffi.nacut.NacutMethods.ChartTicks(max, 3);
         var yMax = ticks[^1];
         double Y(double v) => top + plotH - v / yMax * plotH;
         foreach (var t in ticks)
@@ -506,7 +494,7 @@ static class Charts
         return g;
     }
 
-    public static string HourLabel(int h) => DateTime.Today.AddHours(h).ToString("h tt").ToLowerInvariant();
+    public static string HourLabel(int h) => Logic.Formats.HourLabel(h, System.Globalization.CultureInfo.CurrentCulture);
 
     /// <summary>The ramp legend: "Less ▢▢▢▢▢ More".</summary>
     public static StackPanel RampLegend()

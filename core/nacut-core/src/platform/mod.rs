@@ -43,13 +43,25 @@ pub fn config_dir() -> PathBuf {
 
 /// Claude Code's config folders: `$CLAUDE_CONFIG_DIR` entries first, then `~/.claude`.
 pub fn claude_config_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::env::var("CLAUDE_CONFIG_DIR")
-        .ok()
+    claude_config_dirs_with(std::env::var("CLAUDE_CONFIG_DIR").ok().as_deref(), &home_dir())
+}
+
+/// [`claude_config_dirs`] for a given `CLAUDE_CONFIG_DIR` value and home folder.
+pub fn claude_config_dirs_with(claude_config_dir: Option<&str>, home: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = claude_config_dir
         .map(|v| v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(crate::scanner::expand_tilde).collect())
         .unwrap_or_default();
-    dirs.push(home_dir().join(".claude"));
-    dirs.dedup();
+    dirs.push(home.join(".claude"));
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|d| seen.insert(d.clone()));
     dirs
+}
+
+/// `settings.json` → `settings.json.tmp`, so the temp file can't collide with an unrelated `settings.tmp`.
+fn temp_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    path.with_file_name(name)
 }
 
 /// Creates `dir` (and parents) if needed. On Unix the folder itself is made private (0700), since it
@@ -71,7 +83,7 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         create_private_dir(dir)?;
     }
-    let tmp = path.with_extension("tmp");
+    let tmp = temp_path(path);
     let _ = std::fs::remove_file(&tmp);
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
@@ -113,12 +125,35 @@ mod tests {
         super::write_private(&path, b"one").unwrap();
         super::write_private(&path, b"two").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"two");
-        assert!(!path.with_extension("tmp").exists());
+        assert!(!super::temp_path(&path).exists());
+        assert_eq!(super::temp_path(&path).file_name().unwrap(), "f.json.tmp");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
             assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+    }
+
+    #[test]
+    fn temp_path_appends_tmp_to_the_whole_name() {
+        use std::path::Path;
+        assert_eq!(super::temp_path(Path::new("/d/settings.json")), Path::new("/d/settings.json.tmp"));
+        assert_eq!(super::temp_path(Path::new("/d/noext")), Path::new("/d/noext.tmp"));
+        assert_eq!(super::temp_path(Path::new("rel")), Path::new("rel.tmp"));
+    }
+
+    #[test]
+    fn data_and_config_folders_are_named_for_the_app() {
+        let (data, config) = (super::data_dir(), super::config_dir());
+        if cfg!(target_os = "macos") {
+            assert!(data.ends_with("Library/Application Support/NACUT"), "{data:?}");
+            assert_eq!(config, data);
+        } else if cfg!(windows) {
+            assert!(data.ends_with("NACUT"), "{data:?}");
+            assert_eq!(config, data);
+        } else {
+            assert!(data.ends_with("nacut") && config.ends_with("nacut"), "{data:?} {config:?}");
         }
     }
 

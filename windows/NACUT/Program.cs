@@ -40,11 +40,7 @@ public static class Program
         return 0;
     }
 
-    public static string? Arg(string name)
-    {
-        var i = Array.IndexOf(Args, name);
-        return i >= 0 && i + 1 < Args.Length ? Args[i + 1] : null;
-    }
+    public static string? Arg(string name) => Logic.CommandLine.Arg(Args, name);
 
-    public static bool Flag(string name) => Args.Contains(name);
+    public static bool Flag(string name) => Logic.CommandLine.Flag(Args, name);
 }

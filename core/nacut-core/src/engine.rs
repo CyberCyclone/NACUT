@@ -1017,3 +1017,54 @@ fn api_view(s: &State) -> ApiView {
 pub fn current_cycle(start_day: u8) -> BillingCycle {
     BillingCycle::containing(Timestamp::now(), start_day, &Cal::system())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_cache_file_shape() {
+        let t: Timestamp = "2026-10-30T00:00:00Z".parse().unwrap();
+        let file = ApiCacheFile {
+            actor_id: Some("u1".into()),
+            data: ApiCostData { rows: vec![], refreshed_at: Some(t), coverage_start: t, coverage_end: t, fetched_at: t },
+        };
+        let v = serde_json::to_value(&file).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "actor_id": "u1",
+                "data": {
+                    "rows": [],
+                    "refreshed_at": "2026-10-30T00:00:00Z",
+                    "coverage_start": "2026-10-30T00:00:00Z",
+                    "coverage_end": "2026-10-30T00:00:00Z",
+                    "fetched_at": "2026-10-30T00:00:00Z"
+                }
+            })
+        );
+        let back: ApiCacheFile = serde_json::from_value(v).unwrap();
+        assert_eq!(back.data, file.data);
+    }
+
+    #[test]
+    fn roots_override_ignores_extra_folders() {
+        let s = Settings { extra_roots: vec!["/x".into()], ..Settings::default() };
+        assert_eq!(compute_roots(&s, Some(&[PathBuf::from("/only")])), [PathBuf::from("/only")]);
+        assert!(compute_roots(&s, Some(&[])).is_empty());
+    }
+
+    #[test]
+    fn extra_folders_follow_the_defaults_once() {
+        let s = Settings { extra_roots: vec!["/extra/a".into(), " /extra/a ".into(), "".into()], include_wsl: false, ..Settings::default() };
+        let roots = compute_roots(&s, None);
+        assert_eq!(roots.len(), LogScanner::default_roots().len() + 1);
+        assert_eq!(roots.last(), Some(&PathBuf::from("/extra/a")));
+    }
+
+    #[test]
+    fn current_cycle_starts_on_the_given_day() {
+        assert_eq!(current_cycle(15).start.day(), 15);
+        assert_eq!(current_cycle(1).start.day(), 1);
+    }
+}

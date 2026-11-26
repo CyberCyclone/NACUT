@@ -9,8 +9,9 @@ use nacut_core::engine::ApiState;
 use nacut_core::pricing::PriceBook;
 use nacut_core::merge::DataSourceMode;
 use nacut_core::settings::{AccountMode, SecondFigure, UsageDisplay};
+use nacut_core::CurrencyFormat;
 
-use crate::model::{self, usd, usd_compact, AppModel};
+use crate::model::{self, usd, AppModel};
 use crate::platform;
 use crate::ui;
 
@@ -348,7 +349,7 @@ impl Preferences {
             g.add(&Self::combo("Use", None, &modes.map(model::source_title), modes.iter().position(|x| *x == s.data_source).unwrap_or(0), move |i| m2.update(|s| s.data_source = modes[i])));
 
             let mut options: Vec<(Option<String>, String)> = vec![(None, "Whole organization".into())];
-            options.extend(api.actors.iter().map(|a| (Some(a.id.clone()), format!("{} · {} last 30d", a.display, usd_compact(a.cost)))));
+            options.extend(api.actors.iter().map(|a| (Some(a.id.clone()), format!("{} · {} last 30d", a.display, CurrencyFormat::axis(a.cost)))));
             if let Some(id) = &s.api_actor_id {
                 if !api.actors.iter().any(|a| &a.id == id) {
                     options.push((Some(id.clone()), s.api_actor_name.clone().unwrap_or(id.clone())));
@@ -614,12 +615,48 @@ impl Preferences {
     }
 }
 
+/// `v` with at most `decimals` decimals and no trailing zeros: `1.5`, `0.375`, `15`.
 fn trim(v: f64, decimals: usize) -> String {
     let s = format!("{v:.decimals$}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    s.to_string()
+    if !s.contains('.') {
+        return s;
+    }
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 fn nacut_core_version() -> &'static str {
     nacut_core::VERSION
+}
+
+#[cfg(test)]
+mod tests {
+    use super::trim;
+
+    #[test]
+    fn trims_trailing_zeros() {
+        assert_eq!(trim(1.5, 2), "1.5");
+        assert_eq!(trim(1.50, 3), "1.5");
+        assert_eq!(trim(2.0, 2), "2");
+        assert_eq!(trim(0.375, 3), "0.375");
+        assert_eq!(trim(0.0, 2), "0");
+        assert_eq!(trim(15.0, 2), "15");
+        assert_eq!(trim(100.0, 2), "100");
+        assert_eq!(trim(25.0, 3), "25");
+    }
+
+    #[test]
+    fn rounds_to_the_decimals() {
+        assert_eq!(trim(0.30000000000000004, 3), "0.3");
+        assert_eq!(trim(1.2345, 2), "1.23");
+        assert_eq!(trim(0.0004, 3), "0");
+        assert_eq!(trim(9.999, 2), "10");
+    }
+
+    #[test]
+    fn no_decimals_keeps_integer_zeros() {
+        // Used to strip the zeros of the integer part: 10 became "1", 100 became "1".
+        assert_eq!(trim(10.0, 0), "10");
+        assert_eq!(trim(100.0, 0), "100");
+        assert_eq!(trim(0.0, 0), "0");
+    }
 }

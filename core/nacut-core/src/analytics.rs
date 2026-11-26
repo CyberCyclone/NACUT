@@ -218,11 +218,14 @@ impl AnalyticsClient {
         }
     }
 
-    /// Hourly cost by model from `start` to `end`, split into ≤31-day requests.
+    /// Hourly cost by model from `start` to `end`, split into ≤31-day requests. The API serves nothing before
+    /// 2026-01-01 or more than 364 days back, so coverage starts there when `start` is older: the merge treats
+    /// every covered day without rows as billed $0, which would otherwise wipe out older local-log days.
     pub fn hourly_cost(&self, start: Timestamp, end: Timestamp, actor_id: Option<&str>) -> Result<ApiCostData, ApiError> {
         let mut rows = Vec::new();
         let mut refreshed: Option<Timestamp> = None;
-        let mut chunk_start = floor_hour(start.max(earliest(end)));
+        let coverage_start = start.max(earliest(end));
+        let mut chunk_start = floor_hour(coverage_start);
         while chunk_start < end {
             let chunk_end = (chunk_start + SignedDuration::from_hours(31 * 24)).min(end);
             let mut query = vec![
@@ -244,7 +247,7 @@ impl AnalyticsClient {
             }
             chunk_start = chunk_end;
         }
-        Ok(ApiCostData { rows, refreshed_at: refreshed, coverage_start: start, coverage_end: end, fetched_at: Timestamp::now() })
+        Ok(ApiCostData { rows, refreshed_at: refreshed, coverage_start, coverage_end: end, fetched_at: Timestamp::now() })
     }
 
     /// Who spent what over the last 30 days, for picking "only my usage".
@@ -347,10 +350,19 @@ pub fn status_for(e: &ApiError) -> ConnectionStatus {
         ApiError::Http(403, m) => ConnectionStatus::Forbidden(m.clone()),
         ApiError::Http(404, m) => ConnectionStatus::Unavailable(if m.is_empty() { "(404)".into() } else { m.clone() }),
         ApiError::Http(code, m) => ConnectionStatus::Failed(format!("HTTP {code} {m}")),
-        ApiError::Decoding(m) => ConnectionStatus::Failed(format!("Unexpected response: {}", &m[..m.len().min(160)])),
+        ApiError::Decoding(m) => ConnectionStatus::Failed(format!("Unexpected response: {}", truncate(m, 160))),
         ApiError::CursorExpired => ConnectionStatus::Failed("The API kept changing while paging; try again.".into()),
         ApiError::Transport(m) => ConnectionStatus::Failed(m.clone()),
     }
+}
+
+/// At most `max` bytes of `s`, cut on a character boundary.
+fn truncate(s: &str, max: usize) -> &str {
+    let mut end = s.len().min(max);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 /// Amounts are decimal strings in cents.
@@ -390,4 +402,62 @@ fn encode(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ts(s: &str) -> Timestamp {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn encode_keeps_unreserved_characters() {
+        assert_eq!(encode("aZ09-._~"), "aZ09-._~");
+    }
+
+    #[test]
+    fn encode_escapes_everything_else_as_upper_hex() {
+        assert_eq!(encode("group_by[]"), "group_by%5B%5D");
+        assert_eq!(encode("2026-11-20T01:00:00Z"), "2026-11-20T01%3A00%3A00Z");
+        assert_eq!(encode("a b&c=d/é"), "a%20b%26c%3Dd%2F%C3%A9");
+        assert_eq!(encode(""), "");
+    }
+
+    #[test]
+    fn floor_hour_drops_minutes_seconds_and_fractions() {
+        assert_eq!(floor_hour(ts("2026-11-20T10:59:59.999Z")), ts("2026-11-20T10:00:00Z"));
+        assert_eq!(floor_hour(ts("2026-11-20T10:00:00Z")), ts("2026-11-20T10:00:00Z"));
+        assert_eq!(floor_hour(ts("1969-12-31T23:30:00Z")), ts("1969-12-31T23:00:00Z"));
+    }
+
+    #[test]
+    fn rfc3339_has_whole_seconds_in_utc() {
+        assert_eq!(rfc3339(ts("2026-11-20T10:30:45.999Z")), "2026-11-20T10:30:45Z");
+        assert_eq!(rfc3339(ts("2026-11-20T10:30:45+02:00")), "2026-11-20T08:30:45Z");
+    }
+
+    #[test]
+    fn earliest_is_the_later_of_2026_and_364_days_back() {
+        assert_eq!(earliest(ts("2026-06-01T00:00:00Z")), ts("2026-01-01T00:00:00Z"));
+        assert_eq!(earliest(ts("2027-06-01T00:00:00Z")), ts("2026-06-02T00:00:00Z"));
+    }
+
+    #[test]
+    fn usd_converts_cents_and_defaults_to_zero() {
+        assert_eq!(usd(Some("12345")), 123.45);
+        assert_eq!(usd(Some("-50")), -0.5);
+        assert_eq!(usd(Some("")), 0.0);
+        assert_eq!(usd(Some("1,000")), 0.0);
+        assert_eq!(usd(None), 0.0);
+    }
+
+    #[test]
+    fn truncate_never_splits_a_character() {
+        assert_eq!(truncate("abc", 10), "abc");
+        assert_eq!(truncate("abc", 2), "ab");
+        assert_eq!(truncate("aé", 2), "a");
+        assert_eq!(truncate("", 0), "");
+    }
 }

@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
 import NacutCore
+import NacutKit
+import NacutKitCore
 
 extension Color {
     /// A color with separate light and dark appearances.
@@ -37,25 +39,14 @@ enum Theme {
     ]
     static let other = Color(light: 0x9A9890, dark: 0x6E6D66)
 
-    /// Fixed model → slot registry so a model keeps its color across every view and filter.
-    private static let modelSlots: [String: Int] = [
-        "claude-opus-5-5": 0,
-        "claude-fable-5-2": 1,
-        "claude-sonnet-5-5": 2,
-        "claude-haiku-5-5": 3,
-        "claude-fable-5-1": 4,
-        "claude-opus-5": 5,
-        "claude-sonnet-5": 6,
-        "claude-opus-4-8": 7,
-    ]
-
-    /// `id` is a normalized model id from the core (e.g. `claude-opus-5-5`).
+    /// `id` is a normalized model id from the core (e.g. `claude-opus-5-5`). The core's fixed
+    /// model → slot registry keeps a model's color the same in every view and on every platform.
     static func color(forModel id: String) -> Color {
-        if let slot = modelSlots[id] { return categorical[slot] }
+        if let slot = modelSlot(id: id).map(Int.init), categorical.indices.contains(slot) { return categorical[slot] }
         return other
     }
 
-    static func slotOrder(_ id: String) -> Int { modelSlots[id] ?? 99 }
+    static func slotOrder(_ id: String) -> Int { Int(modelSlotOrder(id: id)) }
 
     static func color(forModelName name: String, in stats: [ModelView]) -> Color {
         if let s = stats.first(where: { $0.name == name }) { return color(forModel: s.id) }
@@ -72,14 +63,12 @@ enum Theme {
     ]
 
     static func rampColor(_ fraction: Double) -> Color {
-        guard fraction > 0 else { return .clear }
-        let i = min(Int((fraction * Double(ramp.count)).rounded(.up)) - 1, ramp.count - 1)
-        return ramp[max(i, 0)]
+        Ramp.index(fraction, steps: ramp.count).map { ramp[$0] } ?? .clear
     }
 
     /// Ink that stays legible on a ramp step.
     static func inkOnRamp(_ fraction: Double) -> Color {
-        fraction > 0.6 ? .white : .primary
+        Ramp.needsLightInk(fraction) ? .white : .primary
     }
 
     static func statusColor(_ s: BudgetStatus) -> Color {
@@ -91,14 +80,7 @@ enum Theme {
         }
     }
 
-    static func statusSymbol(_ s: BudgetStatus) -> String {
-        switch s {
-        case .noBudget, .underBudget: return "checkmark.circle.fill"
-        case .tight: return "exclamationmark.circle.fill"
-        case .willExceed: return "exclamationmark.triangle.fill"
-        case .exceeded: return "xmark.octagon.fill"
-        }
-    }
+    static func statusSymbol(_ s: BudgetStatus) -> String { s.symbolName }
 
     static func levelColor(_ l: Level) -> Color {
         switch l {
@@ -145,11 +127,7 @@ struct Card<Content: View>: View {
 
 extension Double {
     var usd: String { USD.string(self) }
-    var usdCompact: String {
-        if self == 0 { return "$0" }
-        if self < 10 { return USD.string(self) }
-        if self < 1000 { return "$" + String(Int(self.rounded())) }
-        return "$" + String(format: "%.1fk", self / 1000)
-    }
+    /// Short dollars for tiles and chart axes (`$0`, `$4.50`, `$120`, `$1.5k`), from the core.
+    var usdCompact: String { formatUsdAxis(value: self) }
     var percent: String { (self).formatted(.percent.precision(.fractionLength(0))) }
 }

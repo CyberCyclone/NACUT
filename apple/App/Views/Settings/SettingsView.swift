@@ -1,5 +1,7 @@
 import SwiftUI
 import NacutCore
+import NacutKit
+import NacutKitCore
 
 struct SettingsView: View {
     var body: some View {
@@ -205,7 +207,7 @@ struct DataSourceSettings: View {
                         Label(model.apiStatusMessage, systemImage: model.api.state.symbol)
                             .foregroundStyle(.orange).font(.callout)
                     }
-                    if keyInput.trimmingCharacters(in: .whitespaces).hasPrefix("sk-ant-admin") {
+                    if isAdminAPIKey(keyInput) {
                         Label(Self.adminKeyWarning, systemImage: "exclamationmark.shield")
                             .foregroundStyle(.orange).font(.callout)
                     }
@@ -360,9 +362,7 @@ struct PricingSettings: View {
         }
     }
 
-    private func fmt(_ v: Double) -> String {
-        v < 1 ? String(format: "$%.3g", v) : String(format: "$%.2f", v).replacingOccurrences(of: ".00", with: "")
-    }
+    private func fmt(_ v: Double) -> String { formatPerMillionPrice(v) }
 }
 
 struct IdentifiedString: Identifiable { let id: String }
@@ -402,18 +402,5 @@ struct PriceEditor: View {
             }
         }
         .onAppear { rates = model.settings.priceOverrides[modelId] ?? base?.rates ?? rates }
-    }
-}
-
-extension ApiState {
-    var symbol: String {
-        switch self {
-        case .notConfigured: return "circle.dashed"
-        case .connected: return "checkmark.circle.fill"
-        case .noDataYet: return "clock.badge.checkmark"
-        case .unauthorized, .forbidden: return "lock.circle.fill"
-        case .unavailable: return "nosign"
-        case .failed: return "exclamationmark.triangle.fill"
-        }
     }
 }

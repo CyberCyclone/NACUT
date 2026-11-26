@@ -53,6 +53,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Pure UI rules, unit-tested by ..\NACUT.Tests without WinUI or the Rust core. -->
+    <ProjectReference Include="..\NACUT.Logic\NACUT.Logic.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- scripts/build-core.ps1 generates Core\nacut.cs (compiled like any other source) and this DLL. -->
     <None Include="native\$(Platform)\nacut_ffi.dll" Link="nacut_ffi.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\$(Platform)\nacut_ffi.dll')" />
     <Content Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />

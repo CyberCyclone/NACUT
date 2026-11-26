@@ -61,7 +61,7 @@ impl PlanLimit {
                 }
                 (other, name) => {
                     let id = match name {
-                        Some(n) => format!("{other}_{}", n.to_lowercase()),
+                        Some(n) => format!("{other}_{}", n.to_lowercase().replace(' ', "_")),
                         None => other.to_string(),
                     };
                     let label = label_for(&id);
@@ -137,12 +137,14 @@ impl PlanLimit {
     }
 }
 
+/// A finite number, or a string holding one (`"NaN"` and `"inf"` parse as floats but aren't percentages).
 fn number(v: Option<&Value>) -> Option<f64> {
-    match v? {
+    let n = match v? {
         Value::Number(n) => n.as_f64(),
         Value::String(s) => s.parse().ok(),
         _ => None,
-    }
+    };
+    n.filter(|n: &f64| n.is_finite())
 }
 
 pub fn label_for(key: &str) -> String {

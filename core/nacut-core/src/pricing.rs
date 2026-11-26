@@ -115,11 +115,11 @@ impl PriceBook {
         if let Some(i) = m.find('@') {
             m.truncate(i);
         }
-        // Strip a trailing date (-20250101) or version tag (-v1:0).
-        if let Some(stripped) = strip_date_suffix(&m) {
+        // Strip a trailing version tag (-v1:0), then a date (-20250101): Bedrock ids have both, in that order.
+        if let Some(stripped) = strip_version_suffix(&m) {
             m = stripped;
         }
-        if let Some(stripped) = strip_version_suffix(&m) {
+        if let Some(stripped) = strip_date_suffix(&m) {
             m = stripped;
         }
         m.replace("claude-mythos-", "claude-fable-")
@@ -228,5 +228,35 @@ fn strip_version_suffix(m: &str) -> Option<String> {
         Some(m[..i].to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn date_suffix_is_exactly_eight_digits_after_a_hyphen() {
+        assert_eq!(strip_date_suffix("claude-x-20261001").as_deref(), Some("claude-x"));
+        assert_eq!(strip_date_suffix("claude-x-2026100"), None);
+        assert_eq!(strip_date_suffix("claude-x-202610011"), None);
+        assert_eq!(strip_date_suffix("claude-x-2026100a"), None);
+        assert_eq!(strip_date_suffix("20261001"), None);
+    }
+
+    #[test]
+    fn version_suffix_needs_digits_on_both_sides_of_the_colon() {
+        assert_eq!(strip_version_suffix("claude-x-v1").as_deref(), Some("claude-x"));
+        assert_eq!(strip_version_suffix("claude-x-v12:3").as_deref(), Some("claude-x"));
+        assert_eq!(strip_version_suffix("claude-x-v1:"), None);
+        assert_eq!(strip_version_suffix("claude-x-v:1"), None);
+        assert_eq!(strip_version_suffix("claude-x-v1:a"), None);
+        assert_eq!(strip_version_suffix("claude-x"), None);
+    }
+
+    #[test]
+    fn long_context_rates_copy_every_field() {
+        let lc = LongContextRates { threshold: 1, input: 1.0, output: 2.0, write5m: 3.0, write1h: 4.0, read: 5.0 };
+        assert_eq!(lc.rates(), Rates { input: 1.0, output: 2.0, write5m: 3.0, write1h: 4.0, read: 5.0 });
     }
 }

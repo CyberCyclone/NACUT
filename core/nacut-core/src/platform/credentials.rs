@@ -100,4 +100,15 @@ mod tests {
         assert!(t.is_expired(Timestamp::from_millisecond(1795429672763).unwrap()));
         assert_eq!(parse(br#"{}"#).unwrap_err(), CredentialError::NotFound);
     }
+
+    #[test]
+    fn extra_fields_are_ignored() {
+        let t = parse(br#"{"claudeAiOauth":{"accessToken":"a","scopes":["x"],"refreshToken":"r"},"mcpOAuth":{}}"#).unwrap();
+        assert_eq!(t.access_token, "a");
+    }
+
+    #[test]
+    fn a_non_numeric_expiry_is_unreadable() {
+        assert!(matches!(parse(br#"{"claudeAiOauth":{"accessToken":"a","expiresAt":"soon"}}"#), Err(CredentialError::Unreadable(_))));
+    }
 }

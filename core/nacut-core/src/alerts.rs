@@ -64,7 +64,8 @@ impl AlertLedger {
 
         if f.budget > 0.0 {
             for &t in &settings.alert_thresholds {
-                if f.budget_used_fraction() * 100.0 >= t as f64 {
+                // Compared without dividing: 290 / 1000 × 100 is 28.999999999999996, which would miss 29%.
+                if f.spent * 100.0 >= t as f64 * f.budget {
                     let title = if t >= 100 { "Claude budget reached".to_string() } else { format!("Claude budget {t}% used") };
                     let body = format!("{} of {} {noun} this cycle.", usd(f.spent), usd(f.budget));
                     self.fire_once(&mut out, format!("budget-{cycle_key}-{t}"), title, body);
@@ -88,7 +89,7 @@ impl AlertLedger {
                 let window = l.resets_at.map(|r| r.to_string()).unwrap_or_else(|| "none".into());
                 let reset = l.reset_text(now, cal);
                 let body = if reset.is_empty() { "You're close to your plan limit.".to_string() } else { format!("Plan limit {reset}.") };
-                let title = format!("{} limit at {}%", l.label, (l.utilization * 100.0) as i64);
+                let title = format!("{} limit at {}", l.label, crate::views::percent(l.utilization));
                 self.fire_once(&mut out, format!("limit-{}-{window}", l.id), title, body);
             }
         }

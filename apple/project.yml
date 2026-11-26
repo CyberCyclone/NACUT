@@ -30,15 +30,19 @@ packages:
   # The shared Rust core (core/), built by scripts/build-core.sh into NacutCore/nacutFFI.xcframework.
   NacutCore:
     path: NacutCore
+  # Testable Swift logic (NacutKit: Foundation only; NacutKitCore: needs the core's types).
+  NacutKit:
+    path: NacutKit
 targets:
   NACUT:
     type: application
     platform: macOS
     sources:
       - App
-      - Shared
     dependencies:
       - package: NacutCore
+      - package: NacutKit
+        products: [NacutKit, NacutKitCore]
       - target: NACUTWidget
     info:
       path: App/Info.plist
@@ -67,8 +71,10 @@ targets:
     platform: macOS
     sources:
       - Widget
-      - Shared
     dependencies:
+      # Foundation-only product: the sandboxed widget never links the Rust core.
+      - package: NacutKit
+        product: NacutKit
       - sdk: WidgetKit.framework
       - sdk: SwiftUI.framework
     info:

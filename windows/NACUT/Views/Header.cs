@@ -99,7 +99,7 @@ static class Header
     static UIElement LimitGauge(LimitView l)
     {
         var stack = Ui.V(5,
-            Ui.Spread(Ui.Text(l.id == "seven_day" ? "Weekly" : l.label, 12, FontWeights.Medium), Ui.Text(l.utilization.Pct(), 12, FontWeights.SemiBold)),
+            Ui.Spread(Ui.Text(Logic.Formats.LimitLabel(l.id, l.label), 12, FontWeights.Medium), Ui.Text(l.utilization.Pct(), 12, FontWeights.SemiBold)),
             Charts.Bar(l.utilization, Theme.ForLimit(l.utilization), 6, l.projectedAtReset, l.projectedAtReset is { } p ? Theme.ForLimit(p) : null),
             Ui.Secondary(l.subtitle, 11));
         return Ui.Box(stack, 10, 8).Tip(HelpText(l));

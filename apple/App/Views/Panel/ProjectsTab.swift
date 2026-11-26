@@ -1,6 +1,7 @@
 import Charts
 import SwiftUI
 import NacutCore
+import NacutKit
 
 struct ProjectsTab: View {
     @Environment(AppModel.self) private var model
@@ -89,13 +90,7 @@ struct SessionRow: View {
         .padding(.vertical, 3)
     }
 
-    private var duration: String {
-        let s = Int(session.duration)
-        if s < 60 { return "<1m" }
-        let h = s / 3600, m = (s % 3600) / 60
-        if h >= 48 { return "\(h / 24)d \(h % 24)h" }
-        return h > 0 ? "\(h)h \(m)m" : "\(m)m"
-    }
+    private var duration: String { formatSessionDuration(session.duration) }
 }
 
 /// Part-to-whole as one segmented bar with a legend (≤ 4 parts).

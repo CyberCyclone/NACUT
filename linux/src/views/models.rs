@@ -5,9 +5,10 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use nacut_core::engine::StatRange;
 use nacut_core::views::ModelView;
+use nacut_core::CurrencyFormat;
 
 use crate::charts;
-use crate::model::{self, pct, tokens, usd, usd_compact, usd_exact, AppModel};
+use crate::model::{self, pct, tokens, usd, usd_exact, AppModel};
 use crate::prefs;
 use crate::theme;
 use crate::ui::{self, BoxAdd};
@@ -26,7 +27,7 @@ pub fn build(m: &AppModel, rebuild: Rc<dyn Fn()>) -> gtk::Widget {
     if stats.is_empty() {
         v.add(&ui::card(None, None, &[ui::empty("No model usage in this range").upcast_ref()]));
     } else {
-        let donut = charts::donut(stats.iter().map(|s| (s.name.clone(), s.cost, theme::for_model(&s.id))).collect(), 130, usd_compact(total));
+        let donut = charts::donut(stats.iter().map(|s| (s.name.clone(), s.cost, theme::for_model(&s.id))).collect(), 130, CurrencyFormat::axis(total));
         let legend = ui::vbox(6);
         legend.set_valign(gtk::Align::Center);
         legend.set_hexpand(true);
@@ -93,7 +94,7 @@ fn token_card(m: &AppModel, range: StatRange) -> gtk::Widget {
     let classes = m.engine.token_classes(range);
     let total = classes.iter().map(|c| c.value).sum::<f64>().max(0.0001);
     let top = classes.iter().max_by(|a, b| a.value.total_cmp(&b.value)).filter(|c| c.value > 0.0).map(|c| format!("{} is {} of cost in this range.", c.name, pct(c.value / total)));
-    let bars = charts::hbars(classes.iter().map(|c| (c.name.clone(), c.value, format!("{} · {} tok", usd_compact(c.value), tokens(c.tokens)))).collect(), theme::coral());
+    let bars = charts::hbars(classes.iter().map(|c| (c.name.clone(), c.value, format!("{} · {} tok", CurrencyFormat::axis(c.value), tokens(c.tokens)))).collect(), theme::coral());
     let note = ui::dim(&top.unwrap_or_default());
     ui::card(Some("Where the money goes"), None, &[bars.upcast_ref(), note.upcast_ref()]).upcast()
 }

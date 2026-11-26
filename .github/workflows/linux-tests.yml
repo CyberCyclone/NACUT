@@ -1,0 +1,29 @@
+name: Linux tests
+
+# Called by ci.yml when the Linux app, the core or shared files change. Unit tests of the GTK app's logic; they need
+# the GTK and libadwaita headers to compile, but no display.
+on:
+  workflow_call:
+
+# Read-only token: the workflows only build and upload artifacts.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: linux
+      - name: GTK4 and libadwaita
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libdbus-1-dev pkg-config
+      - name: Test
+        working-directory: linux
+        run: cargo test --locked

@@ -118,3 +118,39 @@ fn duration(secs: f64) -> String {
         format!("{m}m")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::duration;
+
+    #[test]
+    fn under_a_minute() {
+        assert_eq!(duration(0.0), "<1m");
+        assert_eq!(duration(59.9), "<1m");
+        assert_eq!(duration(-5.0), "<1m");
+        assert_eq!(duration(f64::NAN), "<1m");
+        assert_eq!(duration(f64::NEG_INFINITY), "<1m");
+    }
+
+    #[test]
+    fn minutes_and_hours() {
+        assert_eq!(duration(60.0), "1m");
+        assert_eq!(duration(3599.0), "59m");
+        assert_eq!(duration(3600.0), "1h 0m");
+        assert_eq!(duration(3600.0 + 25.0 * 60.0 + 59.0), "1h 25m");
+        assert_eq!(duration(47.0 * 3600.0 + 59.0 * 60.0), "47h 59m");
+    }
+
+    #[test]
+    fn days_from_48_hours() {
+        assert_eq!(duration(48.0 * 3600.0), "2d 0h");
+        assert_eq!(duration(49.5 * 3600.0), "2d 1h");
+        assert_eq!(duration(10.0 * 86_400.0 + 23.0 * 3600.0), "10d 23h");
+    }
+
+    #[test]
+    fn huge_values_do_not_panic() {
+        assert!(duration(f64::INFINITY).ends_with('h'));
+        assert!(duration(f64::MAX).ends_with('h'));
+    }
+}

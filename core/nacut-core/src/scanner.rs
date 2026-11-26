@@ -192,6 +192,8 @@ pub(crate) fn parse_lines(data: &[u8], is_subagent_file: bool) -> Vec<UsageRecor
 }
 
 pub(crate) fn parse_line(line: &[u8], is_subagent_file: bool) -> Option<UsageRecord> {
+    // A file saved by a Windows editor can start with a UTF-8 byte-order mark, which JSON parsers reject.
+    let line = line.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(line);
     let raw: RawLine = serde_json::from_slice(line).ok()?;
     if raw.r#type.as_deref() != Some("assistant") || raw.is_api_error_message == Some(true) {
         return None;
@@ -282,4 +284,164 @@ struct RawCacheCreation {
 #[derive(Deserialize)]
 struct RawServerToolUse {
     web_search_requests: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An assistant line with the given message fields (JSON object members, without braces).
+    fn line(extra: &str, message: &str) -> String {
+        format!(r#"{{"type":"assistant","timestamp":"2026-11-20T01:00:00Z"{extra},"message":{{{message}}}}}"#)
+    }
+
+    const MSG: &str = r#""id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1,"output_tokens":2}"#;
+
+    fn parse(s: &str) -> Option<UsageRecord> {
+        parse_line(s.as_bytes(), false)
+    }
+
+    #[test]
+    fn parses_a_minimal_assistant_line() {
+        let r = parse(&line("", MSG)).unwrap();
+        assert_eq!((r.id.as_str(), r.model.as_str(), r.input, r.output), ("m1", "claude-opus-5-5", 1, 2));
+        assert_eq!(r.timestamp, "2026-11-20T01:00:00Z".parse::<Timestamp>().unwrap());
+        assert_eq!(r.entrypoint, "cli");
+        assert_eq!((r.cwd.as_str(), r.session_id.as_str(), r.slug.as_deref()), ("", "", None));
+        assert!(!r.is_subagent && !r.fast);
+    }
+
+    #[test]
+    fn crlf_line_endings_parse() {
+        let data = format!("{}\r\n{}\r\n", line("", MSG), line("", &MSG.replace("m1", "m2")));
+        let ids: Vec<String> = parse_lines(data.as_bytes(), false).into_iter().map(|r| r.id).collect();
+        assert_eq!(ids, ["m1", "m2"]);
+    }
+
+    #[test]
+    fn byte_order_mark_on_the_first_line_is_ignored() {
+        let data = format!("\u{feff}{}\n", line("", MSG));
+        assert_eq!(parse_lines(data.as_bytes(), false).len(), 1);
+    }
+
+    #[test]
+    fn malformed_short_and_blank_lines_are_skipped() {
+        let data = format!("{{\"usage\" \"assistant\" broken\n\n   \n{{\"usage\":\"assistant\"}}\n{}\n", line("", MSG));
+        let records = parse_lines(data.as_bytes(), false);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, "m1");
+    }
+
+    #[test]
+    fn lines_without_a_usage_key_are_not_decoded() {
+        let no_usage = line("", r#""id":"m1","model":"claude-opus-5-5""#);
+        assert!(parse_lines(format!("{no_usage}\n").as_bytes(), false).is_empty());
+    }
+
+    #[test]
+    fn non_assistant_or_untyped_lines_are_dropped() {
+        assert!(parse(&line("", MSG).replace(r#""type":"assistant""#, r#""type":"user""#)).is_none());
+        assert!(parse(&line("", MSG).replace(r#""type":"assistant","#, "")).is_none());
+    }
+
+    #[test]
+    fn api_error_messages_are_dropped() {
+        assert!(parse(&line(r#","isApiErrorMessage":true"#, MSG)).is_none());
+        assert!(parse(&line(r#","isApiErrorMessage":false"#, MSG)).is_some());
+    }
+
+    #[test]
+    fn missing_message_or_usage_is_dropped() {
+        assert!(parse(r#"{"type":"assistant","timestamp":"2026-11-20T01:00:00Z","uuid":"u"}"#).is_none());
+        assert!(parse(&line("", r#""id":"m1","model":"claude-opus-5-5""#)).is_none());
+    }
+
+    #[test]
+    fn empty_or_synthetic_model_is_dropped() {
+        assert!(parse(&line("", &MSG.replace("claude-opus-5-5", ""))).is_none());
+        assert!(parse(&line("", &MSG.replace("claude-opus-5-5", "<synthetic>"))).is_none());
+        assert!(parse(&line("", r#""id":"m1","usage":{"input_tokens":1}"#)).is_none());
+    }
+
+    #[test]
+    fn missing_or_unparseable_timestamp_is_dropped() {
+        let l = line("", MSG);
+        assert!(parse(&l.replace(r#""timestamp":"2026-11-20T01:00:00Z","#, "")).is_none());
+        assert!(parse(&l.replace("2026-11-20T01:00:00Z", "yesterday")).is_none());
+        assert!(parse(&l.replace("2026-11-20T01:00:00Z", "2026-11-20 01:00:00")).is_none());
+    }
+
+    #[test]
+    fn offset_timestamps_are_converted_to_utc() {
+        let r = parse(&line("", MSG).replace("2026-11-20T01:00:00Z", "2026-11-20T11:30:00.250+10:30")).unwrap();
+        assert_eq!(r.timestamp, "2026-11-20T01:00:00.25Z".parse::<Timestamp>().unwrap());
+    }
+
+    #[test]
+    fn id_falls_back_to_request_id_then_uuid() {
+        let no_id = r#""model":"claude-opus-5-5","usage":{"input_tokens":1}"#;
+        assert_eq!(parse(&line(r#","requestId":"req","uuid":"u""#, no_id)).unwrap().id, "req");
+        assert_eq!(parse(&line(r#","uuid":"u""#, no_id)).unwrap().id, "u");
+        assert!(parse(&line("", no_id)).is_none());
+        assert_eq!(parse(&line(r#","requestId":"req","uuid":"u""#, MSG)).unwrap().id, "m1");
+    }
+
+    fn writes(usage: &str) -> (u64, u64) {
+        let r = parse(&line("", &format!(r#""id":"m1","model":"claude-opus-5-5","usage":{{{usage}}}"#))).unwrap();
+        (r.cache_write_5m, r.cache_write_1h)
+    }
+
+    #[test]
+    fn cache_writes_without_a_breakdown_count_as_5_minute() {
+        assert_eq!(writes(r#""cache_creation_input_tokens":700"#), (700, 0));
+    }
+
+    #[test]
+    fn cache_write_breakdown_short_of_the_total_tops_up_5_minute() {
+        let u = r#""cache_creation_input_tokens":1000,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":300}"#;
+        assert_eq!(writes(u), (700, 300));
+    }
+
+    #[test]
+    fn cache_write_breakdown_above_the_total_is_kept() {
+        let u = r#""cache_creation_input_tokens":100,"cache_creation":{"ephemeral_5m_input_tokens":200,"ephemeral_1h_input_tokens":300}"#;
+        assert_eq!(writes(u), (200, 300));
+    }
+
+    #[test]
+    fn empty_cache_breakdown_takes_the_total_as_5_minute() {
+        assert_eq!(writes(r#""cache_creation_input_tokens":50,"cache_creation":{}"#), (50, 0));
+    }
+
+    #[test]
+    fn missing_token_counts_are_zero() {
+        let r = parse(&line("", r#""id":"m1","model":"claude-opus-5-5","usage":{}"#)).unwrap();
+        assert_eq!((r.input, r.output, r.cache_write_5m, r.cache_write_1h, r.cache_read, r.web_searches), (0, 0, 0, 0, 0, 0));
+    }
+
+    #[test]
+    fn sidechain_flag_alone_marks_a_subagent() {
+        assert!(parse(&line(r#","isSidechain":true"#, MSG)).unwrap().is_subagent);
+        assert!(!parse(&line(r#","isSidechain":false"#, MSG)).unwrap().is_subagent);
+        assert!(parse_line(line("", MSG).as_bytes(), true).unwrap().is_subagent);
+    }
+
+    #[test]
+    fn copies_session_fields_and_speed() {
+        let extra = r#","cwd":"/x","sessionId":"s","slug":"brave-otter","entrypoint":"sdk-ts""#;
+        let msg = r#""id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1,"speed":"fast","server_tool_use":{"web_search_requests":2}}"#;
+        let r = parse(&line(extra, msg)).unwrap();
+        assert_eq!((r.cwd.as_str(), r.session_id.as_str(), r.slug.as_deref(), r.entrypoint.as_str()), ("/x", "s", Some("brave-otter"), "sdk-ts"));
+        assert!(r.fast);
+        assert_eq!(r.web_searches, 2);
+    }
+
+    #[test]
+    fn parse_date_accepts_rfc3339_variants() {
+        assert_eq!(parse_date("2026-11-20T01:00:00Z").unwrap().as_second(), 1_795_136_400);
+        assert_eq!(parse_date("2026-11-20T01:00:00.123456Z").unwrap().as_microsecond(), 1_795_136_400_123_456);
+        assert_eq!(parse_date("2026-11-20T02:00:00+01:00").unwrap().as_second(), 1_795_136_400);
+        assert_eq!(parse_date(""), None);
+        assert_eq!(parse_date("2026-11-20"), None);
+    }
 }

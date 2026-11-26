@@ -1,4 +1,4 @@
-name: Core
+name: Core tests
 
 # Called by ci.yml when this build is affected.
 on:

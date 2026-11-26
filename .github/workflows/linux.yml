@@ -29,6 +29,20 @@ jobs:
         run: |
           (cd core && cargo build --release --locked -p nacut-cli)
           (cd linux && cargo build --release --locked)
+      # Renders every tab, settings page and the tray icon headless, as AGENTS.md describes for checking UI changes.
+      - name: Render smoke test
+        timeout-minutes: 5
+        run: |
+          sudo apt-get install -y xvfb
+          out="$RUNNER_TEMP/shots"
+          GDK_BACKEND=x11 dbus-run-session -- xvfb-run -a linux/target/release/nacut-gtk \
+            --render-to "$out" --limits-json shared/fixtures/limits-live.json
+          ls -l "$out"
+          for name in panel-overview panel-calendar panel-models panel-projects; do
+            ls "$out/$name"-*.png
+          done
+          test -s "$out/tray.png"
+          ls "$out"/settings-*.png
       - name: .deb
         run: |
           cargo install cargo-deb --locked

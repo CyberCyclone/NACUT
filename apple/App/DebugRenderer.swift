@@ -1,24 +1,22 @@
 import AppKit
 import SwiftUI
 import NacutCore
+import NacutKit
 
 /// `NACUT --render-to <dir>` renders each panel tab to PNG (light and dark) and quits.
 /// Used to check the UI without opening the menu bar panel.
 @MainActor
 enum DebugRenderer {
-    static var outputDir: URL? {
-        let args = CommandLine.arguments
-        guard let i = args.firstIndex(of: "--render-to"), i + 1 < args.count else { return nil }
-        return URL(filePath: args[i + 1], directoryHint: .isDirectory)
-    }
+    static let options = RenderOptions.parse(arguments: CommandLine.arguments)
+    static var outputDir: URL? { options?.outputDir }
 
     static func runIfRequested(model: AppModel) {
-        guard let dir = outputDir else { return }
+        guard let options else { return }
+        let dir = options.outputDir
         Task { @MainActor in
             while !model.hasLoaded { try? await Task.sleep(for: .milliseconds(200)) }
             // Render with a saved limits response instead of reading the Keychain.
-            if let i = CommandLine.arguments.firstIndex(of: "--limits-json"), i + 1 < CommandLine.arguments.count,
-               let json = try? String(contentsOf: URL(filePath: CommandLine.arguments[i + 1]), encoding: .utf8) {
+            if let url = options.limitsJSON, let json = try? String(contentsOf: url, encoding: .utf8) {
                 model.debugSetLimits(json: json)
             }
             try? await Task.sleep(for: .milliseconds(500))
@@ -69,8 +67,7 @@ private struct CalendarTabStatic: View {
 
     var body: some View {
         let month = Calendar.current.dateInterval(of: .month, for: .now)!.start
-        let costs = model.series.values.map(\.cost).filter { $0 > 0 }.sorted()
-        let scale = costs.isEmpty ? 1 : costs[min(Int(Double(costs.count) * 0.95), costs.count - 1)]
+        let scale = CalendarMath.scaleMax(model.series.values.map(\.cost))
         VStack(spacing: 12) {
             Text(month.formatted(.dateTime.month(.wide).year())).font(.title3.weight(.semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)

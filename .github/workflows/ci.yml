@@ -1,8 +1,8 @@
 name: CI
 
-# The only workflow triggered by pushes and pull requests. It runs the platform builds that a change affects, then
-# reports "CI passed", the check master requires. Path filters on a workflow's own trigger can't be used with a
-# required check: a pull request that matches none of them would wait for it forever.
+# The only workflow triggered by pushes and pull requests. It runs the platform builds and test suites that a change
+# affects, then reports "CI passed", the check master requires. Path filters on a workflow's own trigger can't be used
+# with a required check: a pull request that matches none of them would wait for it forever.
 on:
   pull_request:
   push:
@@ -20,11 +20,14 @@ jobs:
       apple: ${{ steps.diff.outputs.apple }}
       linux: ${{ steps.diff.outputs.linux }}
       windows: ${{ steps.diff.outputs.windows }}
+      apple_tests: ${{ steps.diff.outputs.apple_tests }}
+      linux_tests: ${{ steps.diff.outputs.linux_tests }}
+      windows_tests: ${{ steps.diff.outputs.windows_tests }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - name: Find affected builds
+      - name: Find affected builds and tests
         id: diff
         env:
           # A pull request checks out a merge commit, whose first parent is the base branch.
@@ -43,7 +46,11 @@ jobs:
           apple=$(changed apple .github/workflows/apple.yml)
           linux=$(changed linux .github/workflows/linux.yml)
           windows=$(changed windows .github/workflows/windows.yml)
-          printf '%s\n' "core=$core" "apple=$apple" "linux=$linux" "windows=$windows" | tee -a "$GITHUB_OUTPUT"
+          apple_tests=$(changed apple .github/workflows/apple-tests.yml)
+          linux_tests=$(changed linux .github/workflows/linux-tests.yml)
+          windows_tests=$(changed windows .github/workflows/windows-tests.yml)
+          printf '%s\n' "core=$core" "apple=$apple" "linux=$linux" "windows=$windows" \
+            "apple_tests=$apple_tests" "linux_tests=$linux_tests" "windows_tests=$windows_tests" | tee -a "$GITHUB_OUTPUT"
 
   core:
     needs: changes
@@ -68,10 +75,25 @@ jobs:
       NACUT_CERT_PFX: ${{ secrets.NACUT_CERT_PFX }}
       NACUT_CERT_PASSWORD: ${{ secrets.NACUT_CERT_PASSWORD }}
 
-  # Every build job above must be listed in `needs`, or its failure won't block merging.
+  apple-tests:
+    needs: changes
+    if: needs.changes.outputs.apple_tests == 'true'
+    uses: ./.github/workflows/apple-tests.yml
+
+  linux-tests:
+    needs: changes
+    if: needs.changes.outputs.linux_tests == 'true'
+    uses: ./.github/workflows/linux-tests.yml
+
+  windows-tests:
+    needs: changes
+    if: needs.changes.outputs.windows_tests == 'true'
+    uses: ./.github/workflows/windows-tests.yml
+
+  # Every build and test job above must be listed in `needs`, or its failure won't block merging.
   passed:
     name: CI passed
-    needs: [changes, core, apple, linux, windows]
+    needs: [changes, core, apple, linux, windows, apple-tests, linux-tests, windows-tests]
     # Without always() this job is skipped when a build fails, and GitHub counts a skipped check as passing.
     if: always()
     runs-on: ubuntu-24.04

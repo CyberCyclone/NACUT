@@ -46,10 +46,16 @@ pub fn set(key: &str, value: &str) {
 }
 
 pub fn range(key: &str) -> StatRange {
-    match get(key, "cycle").as_str() {
-        "last30" => StatRange::Last30,
-        "allTime" => StatRange::AllTime,
-        _ => StatRange::Cycle,
+    parse_range(&get(key, "cycle")).unwrap_or(StatRange::Cycle)
+}
+
+/// The inverse of [`range_key`].
+pub fn parse_range(s: &str) -> Option<StatRange> {
+    match s {
+        "cycle" => Some(StatRange::Cycle),
+        "last30" => Some(StatRange::Last30),
+        "allTime" => Some(StatRange::AllTime),
+        _ => None,
     }
 }
 
@@ -58,5 +64,31 @@ pub fn range_key(r: StatRange) -> &'static str {
         StatRange::Cycle => "cycle",
         StatRange::Last30 => "last30",
         StatRange::AllTime => "allTime",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn range_keys_round_trip() {
+        for r in [StatRange::Cycle, StatRange::Last30, StatRange::AllTime] {
+            assert_eq!(parse_range(range_key(r)), Some(r));
+        }
+    }
+
+    #[test]
+    fn range_keys_are_the_core_serde_names() {
+        for r in [StatRange::Cycle, StatRange::Last30, StatRange::AllTime] {
+            assert_eq!(serde_json::to_value(r).unwrap(), serde_json::Value::String(range_key(r).into()));
+        }
+    }
+
+    #[test]
+    fn unknown_range_keys() {
+        for s in ["", "Cycle", "last_30", "alltime", "allTime ", "30"] {
+            assert_eq!(parse_range(s), None, "{s:?}");
+        }
     }
 }

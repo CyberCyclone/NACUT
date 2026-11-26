@@ -1,5 +1,6 @@
 import SwiftUI
 import NacutCore
+import NacutKitCore
 
 struct HeaderView: View {
     @Environment(AppModel.self) private var model
@@ -211,7 +212,7 @@ struct LimitRing: View {
         .padding(.vertical, 10)
         .padding(.horizontal, 4)
         .background(.fill.quinary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .help(limit.helpText + (limit.projectedAtReset != nil ? " The faint arc is the pace." : ""))
+        .help(limit.helpText() + (limit.projectedAtReset != nil ? " The faint arc is the pace." : ""))
         .accessibilityElement(children: .combine)
     }
 }

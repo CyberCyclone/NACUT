@@ -1,6 +1,8 @@
 import AppKit
 import Foundation
 import NacutCore
+import NacutKit
+import NacutKitCore
 import Observation
 import ServiceManagement
 import WidgetKit
@@ -218,12 +220,10 @@ final class AppModel {
         guard DebugRenderer.outputDir == nil else { return }
         guard force || Date.now.timeIntervalSince(lastSnapshotWrite) > 60 else { return }
         lastSnapshotWrite = .now
-        let cal = Calendar.current
         let now = Date.now
-        var monthDays: [Int: Double] = [:]
-        for d in snap.series where Int(d.date.year) == cal.component(.year, from: now) && Int(d.date.month) == cal.component(.month, from: now) {
-            monthDays[Int(d.date.day)] = d.cost
-        }
+        let monthDays = WidgetSnapshot.monthDays(
+            snap.series.map { DayCost(year: Int($0.date.year), month: Int($0.date.month), day: Int($0.date.day), cost: $0.cost) },
+            now: now, calendar: .current)
         let models = engine.modelStats(range: .cycle).prefix(3).map { WidgetSnapshot.ModelSlice(name: $0.name, cost: $0.cost) }
         let f = snap.forecast
         let snapshot = WidgetSnapshot(
@@ -232,25 +232,13 @@ final class AppModel {
             status: SnapshotStatus(f.status), headline: f.headline,
             last14: engine.lastDays(count: 14).map(\.cost), monthDays: monthDays,
             monthTitle: now.formatted(.dateTime.month(.wide)), topModels: Array(models),
-            limits: limits.map { .init(label: $0.shortLabel, utilization: $0.utilization, resetsAt: $0.resetsAt) },
+            limits: limits.map(WidgetSnapshot.Limit.init),
             showLimits: showsLimits)
         do {
             try snapshot.write()
             WidgetCenter.shared.reloadAllTimelines()
         } catch {
             NSLog("Widget snapshot write failed: \(error)")
-        }
-    }
-}
-
-extension SnapshotStatus {
-    init(_ s: BudgetStatus) {
-        switch s {
-        case .noBudget: self = .noBudget
-        case .underBudget: self = .underBudget
-        case .tight: self = .tight
-        case .willExceed: self = .willExceed
-        case .exceeded: self = .exceeded
         }
     }
 }

@@ -18,9 +18,14 @@ pub fn transcript_roots() -> Vec<PathBuf> {
     }
 }
 
-/// `wsl.exe` prints UTF-16LE; this turns its output into one name per line.
+/// `wsl.exe` prints UTF-16LE (UTF-8 when `WSL_UTF8=1`); this turns its output into one name per line.
+/// UTF-16 is recognised by a byte-order mark or by a zero high byte anywhere (every line ends in `\r\n`,
+/// whose high bytes are zero), so names outside Latin-1 decode too.
 pub fn decode_distro_list(bytes: &[u8]) -> Vec<String> {
-    let text = if bytes.len() >= 2 && bytes.len() % 2 == 0 && bytes.iter().skip(1).step_by(2).all(|&b| b == 0) {
+    let utf16 = bytes.len() >= 2
+        && bytes.len() % 2 == 0
+        && (bytes.starts_with(&[0xFF, 0xFE]) || bytes.iter().skip(1).step_by(2).any(|&b| b == 0));
+    let text = if utf16 {
         let units: Vec<u16> = bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         String::from_utf16_lossy(&units)
     } else {

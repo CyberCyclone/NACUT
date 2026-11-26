@@ -4,9 +4,11 @@ use gtk::prelude::*;
 use nacut_core::engine::StatRange;
 use nacut_core::forecast::BudgetStatus;
 use nacut_core::forecast::PointKind;
+use nacut_core::views::model_slot_order;
+use nacut_core::CurrencyFormat;
 
 use crate::charts::{self, LinePoint, Stack};
-use crate::model::{self, fmt, pct, usd, usd_compact, AppModel};
+use crate::model::{self, fmt, pct, usd, AppModel};
 use crate::theme;
 use crate::ui::{self, BoxAdd};
 
@@ -28,11 +30,11 @@ pub fn build(m: &AppModel) -> gtk::Widget {
                 Some("Cycle-to-date spend divided by days elapsed. The 7-day figure is the recent run rate.")),
             ui::stat_tile("Projected", &usd(f.projected), Some(&format!("by {}", fmt(f.cycle_end_ms - 86_400_000, "%b %-d"))), "go-up-symbolic", &status_tint,
                 Some("Spend so far plus the blended daily rate × days remaining")),
-            ui::stat_tile("Last 7 days", &usd(i.last7_days), Some(&format!("30 days {}", usd_compact(i.last30_days))), "x-office-calendar-symbolic", "coral", None),
-            ui::stat_tile("vs last cycle", &vs, Some(&format!("Last cycle {}", usd_compact(i.previous_cycle_total))),
+            ui::stat_tile("Last 7 days", &usd(i.last7_days), Some(&format!("30 days {}", CurrencyFormat::axis(i.last30_days))), "x-office-calendar-symbolic", "coral", None),
+            ui::stat_tile("vs last cycle", &vs, Some(&format!("Last cycle {}", CurrencyFormat::axis(i.previous_cycle_total))),
                 if i.vs_previous_cycle.unwrap_or(0.0) >= 0.0 { "go-up-symbolic" } else { "go-down-symbolic" }, "coral",
                 Some("This cycle so far compared with the same point in the previous cycle")),
-            ui::stat_tile("All time", &usd_compact(i.all_time), snap.first_record_ms.map(|ms| format!("since {}", fmt(ms, "%b %Y"))).as_deref(), "accessories-calculator-symbolic", "coral", None),
+            ui::stat_tile("All time", &CurrencyFormat::axis(i.all_time), snap.first_record_ms.map(|ms| format!("since {}", fmt(ms, "%b %Y"))).as_deref(), "accessories-calculator-symbolic", "coral", None),
         ],
     );
 
@@ -82,7 +84,7 @@ fn cumulative_card(m: &AppModel) -> gtk::Widget {
 fn daily_bars_card(m: &AppModel) -> gtk::Widget {
     let days = m.engine.last_days(30);
     let mut ids: Vec<String> = days.iter().flat_map(|d| d.by_model.keys().cloned()).collect();
-    ids.sort_by(|a, b| (theme::slot_order(a), a.as_str()).cmp(&(theme::slot_order(b), b.as_str())));
+    ids.sort_by(|a, b| (model_slot_order(a), a.as_str()).cmp(&(model_slot_order(b), b.as_str())));
     ids.dedup();
     let mut has_other = false;
     let stacks: Vec<Stack> = days

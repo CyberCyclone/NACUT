@@ -241,6 +241,30 @@ pub fn format_percent(fraction: f64) -> String {
     views::percent(fraction)
 }
 
+/// Short chart-axis dollars: `$0`, `$4.50`, `$120`, `$1.5k`.
+#[uniffi::export]
+pub fn format_usd_axis(value: f64) -> String {
+    CurrencyFormat::axis(value)
+}
+
+/// Color slot (0–7) of a normalized model id, or `None` for the "other" color.
+#[uniffi::export]
+pub fn model_slot(id: String) -> Option<u32> {
+    views::model_slot(&id)
+}
+
+/// Sort key that puts registered models first, in slot order (99 for the rest).
+#[uniffi::export]
+pub fn model_slot_order(id: String) -> u32 {
+    views::model_slot_order(&id)
+}
+
+/// "Nice" chart-axis values from 0 to at least `max`, about `count` steps.
+#[uniffi::export]
+pub fn chart_ticks(max: f64, count: u32) -> Vec<f64> {
+    views::chart_ticks(max, count)
+}
+
 /// Defaults with account mode and plan detected from `~/.claude.json`.
 #[uniffi::export]
 pub fn detected_settings() -> Settings {
@@ -308,4 +332,171 @@ pub struct PriceTableInfo {
 pub fn price_table_info() -> PriceTableInfo {
     let t = &crate::pricing::PriceBook::bundled().table;
     PriceTableInfo { updated: t.updated.clone(), fast_multiplier: t.fast_multiplier, web_search_per_thousand: t.web_search_per_thousand }
+}
+
+// Runs when nacut-core is built with the `ffi` feature: `cargo test --workspace` (nacut-ffi turns it on for the
+// whole workspace build) or `cargo test -p nacut-core --features ffi`.
+#[cfg(all(test, feature = "ffi"))]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    fn data_dir() -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data").to_string_lossy().into_owned();
+        (dir, path)
+    }
+
+    /// No roots override exists through FFI, but constructing the engine only computes folder names; nothing is
+    /// scanned until `scan_now`/`start`, which these tests never call.
+    fn engine() -> (tempfile::TempDir, Arc<NacutEngine>) {
+        let (dir, path) = data_dir();
+        (dir, NacutEngine::new(path, None, Some(Settings::default())))
+    }
+
+    fn fixture(name: &str) -> String {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../shared/fixtures").join(name)).unwrap()
+    }
+
+    #[test]
+    fn currency_wrappers() {
+        assert_eq!(format_usd(4.21, false), "$4.21");
+        assert_eq!(format_usd(1234.0, false), "$1,234");
+        assert_eq!(format_usd(12_345.0, true), "$12.3k");
+        assert_eq!(format_usd_exact(0.01844), "$0.0184");
+        assert_eq!(format_tokens(957_200_000), "957.2M");
+        assert_eq!(format_percent(0.15), "15%");
+        assert_eq!(format_percent(-0.0), "0%");
+    }
+
+    #[test]
+    fn axis_dollars() {
+        assert_eq!(format_usd_axis(0.0), "$0");
+        assert_eq!(format_usd_axis(4.5), "$4.50");
+        assert_eq!(format_usd_axis(120.0), "$120");
+        assert_eq!(format_usd_axis(1500.0), "$1.5k");
+        assert_eq!(format_usd_axis(-1500.0), "-$1.5k");
+        assert_eq!(format_usd_axis(2_300_000.0), "$2.3M");
+        assert_eq!(format_usd_axis(f64::NAN), "$0");
+    }
+
+    #[test]
+    fn model_slots() {
+        assert_eq!(model_slot("claude-opus-5-5".into()), Some(0));
+        assert_eq!(model_slot("claude-opus-4-8".into()), Some(7));
+        assert_eq!(model_slot("claude-opus-5-5-20261001".into()), None, "ids must be normalized first");
+        assert_eq!(model_slot("gpt-5".into()), None);
+        assert_eq!(model_slot_order("claude-sonnet-5-5".into()), 2);
+        assert_eq!(model_slot_order("gpt-5".into()), 99);
+    }
+
+    #[test]
+    fn ticks() {
+        assert_eq!(chart_ticks(10.0, 5), [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]);
+        assert_eq!(chart_ticks(0.0, 5), views::chart_ticks(0.0, 5));
+    }
+
+    #[test]
+    fn price_table_follows_the_bundled_order() {
+        let rows = price_table();
+        let book = crate::pricing::PriceBook::bundled();
+        assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), book.table.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>());
+        assert_eq!(rows[0].id, "claude-fable-5-2");
+        let opus = rows.iter().find(|r| r.id == "claude-opus-5-5").unwrap();
+        assert_eq!((opus.name.as_str(), opus.family.as_str()), ("Opus 5.5", "opus"));
+        assert_eq!(opus.rates, crate::pricing::Rates { input: 4.0, output: 20.0, write5m: 5.0, write1h: 8.0, read: 0.2 });
+    }
+
+    #[test]
+    fn only_haiku_5_5_has_a_long_context_tier() {
+        let tiered: Vec<String> = price_table().into_iter().filter(|r| r.has_long_context_tier).map(|r| r.id).collect();
+        assert_eq!(tiered, ["claude-haiku-5-5"]);
+    }
+
+    #[test]
+    fn price_table_info_matches_the_bundled_table() {
+        let info = price_table_info();
+        assert_eq!(info.updated, "2026-11-25");
+        assert_eq!((info.fast_multiplier, info.web_search_per_thousand), (2.0, 10.0));
+    }
+
+    #[test]
+    fn api_results_for_every_status() {
+        let r = |s: ConnectionStatus| {
+            let r = ApiResult::from(s);
+            (r.state, r.usable)
+        };
+        assert_eq!(r(ConnectionStatus::NotConfigured), (ApiState::NotConfigured, false));
+        assert_eq!(r(ConnectionStatus::Connected { refreshed_at: None }), (ApiState::Connected, true));
+        assert_eq!(r(ConnectionStatus::NoDataYet), (ApiState::NoDataYet, true));
+        assert_eq!(r(ConnectionStatus::Unauthorized("m".into())), (ApiState::Unauthorized, false));
+        assert_eq!(r(ConnectionStatus::Forbidden("m".into())), (ApiState::Forbidden, false));
+        assert_eq!(r(ConnectionStatus::Unavailable("m".into())), (ApiState::Unavailable, false));
+        assert_eq!(r(ConnectionStatus::Failed("m".into())), (ApiState::Failed, false));
+    }
+
+    #[test]
+    fn api_result_messages() {
+        assert_eq!(ApiResult::from(ConnectionStatus::Failed("offline".into())).message, "Couldn't reach the API: offline");
+        assert_eq!(ApiResult::from(ConnectionStatus::Connected { refreshed_at: None }).message, "Connected");
+        let at = "2026-11-24T16:02:11Z".parse().unwrap();
+        // The time is shown in the local zone, so only the prefix is fixed.
+        assert!(ApiResult::from(ConnectionStatus::Connected { refreshed_at: Some(at) }).message.starts_with("Connected · data through Nov 2"));
+    }
+
+    #[test]
+    fn debug_limits_json_reports_how_many_parsed() {
+        let (_dir, e) = engine();
+        assert_eq!(e.debug_set_limits_json(fixture("limits-live.json")), 3);
+        assert_eq!(e.status().limits.len(), 3);
+        assert_eq!(e.debug_set_limits_json(fixture("limits.json")), 2);
+        assert_eq!(e.debug_set_limits_json("not json".into()), 0);
+        assert!(e.status().limits.is_empty());
+    }
+
+    #[test]
+    fn engine_wrappers_without_scanning() {
+        let (_dir, e) = engine();
+        assert_eq!(e.range_bounds(StatRange::AllTime).start_ms, 0);
+        let split = e.agent_split(StatRange::AllTime);
+        assert_eq!((split.main, split.subagents), (0.0, 0.0));
+        assert_eq!(e.snapshot().record_count, 0);
+        assert_eq!(e.display_name("claude-opus-5-5-20261001".into()), "Opus 5.5");
+        assert_eq!(e.save_api_key("  ".into()).state, ApiState::NotConfigured);
+        assert_eq!(e.settings(), Settings::default());
+    }
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<Alert>>);
+
+    impl NacutObserver for Recorder {
+        fn on_change(&self) {}
+        fn on_alert(&self, alert: Alert) {
+            self.0.lock().unwrap().push(alert);
+        }
+    }
+
+    #[test]
+    fn observer_bridge_forwards_alerts() {
+        let (_dir, e) = engine();
+        let rec = Arc::new(Recorder::default());
+        e.set_observer(Some(rec.clone()));
+        e.send_test_alert();
+        assert_eq!(rec.0.lock().unwrap().len(), 1);
+        e.set_observer(None);
+        e.send_test_alert();
+        assert_eq!(rec.0.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn versions_and_defaults() {
+        assert_eq!(core_version(), crate::VERSION);
+        assert_eq!(default_settings(), Settings::default());
+        assert_eq!(standard_data_dir(), crate::platform::data_dir().to_string_lossy());
+        assert_eq!(
+            default_log_roots(),
+            crate::scanner::LogScanner::default_roots().iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>()
+        );
+    }
 }

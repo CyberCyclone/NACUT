@@ -102,7 +102,11 @@ sealed class AppModel
 
     public void SetUsageDisplay(UsageDisplay display)
     {
-        Update(s => s with { usageDisplay = display, limitsEnabled = s.limitsEnabled || display == UsageDisplay.Limits });
+        Update(s => s with
+        {
+            usageDisplay = display,
+            limitsEnabled = Logic.Rules.LimitsEnabledAfterDisplayChange(s.limitsEnabled, display == UsageDisplay.Limits),
+        });
     }
 
     public void RefreshAll()
@@ -148,13 +152,8 @@ static class CoreExtensions
     public static DateOnly Today => DateOnly.FromDateTime(DateTime.Now);
 
     public static string Usd(this double v) => NacutMethods.FormatUsd(v, false);
-    public static string UsdCompact(this double v) => v switch
-    {
-        0 => "$0",
-        < 10 => NacutMethods.FormatUsd(v, false),
-        < 1000 => "$" + Math.Round(v).ToString("0"),
-        _ => "$" + (v / 1000).ToString("0.0") + "k",
-    };
+    /// <summary>Short chart-axis dollars from the core: `$0`, `$4.50`, `$120`, `$1.5k`.</summary>
+    public static string UsdCompact(this double v) => NacutMethods.FormatUsdAxis(v);
     public static string UsdExact(this double v) => NacutMethods.FormatUsdExact(v);
     public static string Pct(this double v) => NacutMethods.FormatPercent(v);
     public static string Tokens(this ulong n) => NacutMethods.FormatTokens(n);
@@ -216,8 +215,13 @@ static class Prefs
         catch (Exception e) { Log.Write($"Prefs save failed: {e.Message}"); }
     }
 
-    public static StatRange Range(string key) =>
-        Enum.TryParse<StatRange>(Get(key, nameof(StatRange.Cycle)), out var r) ? r : StatRange.Cycle;
+    /// <summary>A range saved with <c>Set(key, range.ToString())</c>; the names match the core's StatRange.</summary>
+    public static StatRange Range(string key) => Logic.Rules.ParseRange(Get(key, nameof(StatRange.Cycle))) switch
+    {
+        Logic.RangeChoice.Last30 => StatRange.Last30,
+        Logic.RangeChoice.AllTime => StatRange.AllTime,
+        _ => StatRange.Cycle,
+    };
 }
 
 /// <summary>

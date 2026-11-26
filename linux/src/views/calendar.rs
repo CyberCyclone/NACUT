@@ -7,9 +7,10 @@ use adw::prelude::*;
 use jiff::civil::Date;
 use nacut_core::store::CostSource;
 use nacut_core::views::DayEntry;
+use nacut_core::CurrencyFormat;
 
 use crate::charts::{self, Stack};
-use crate::model::{self, fmt, usd, usd_compact, usd_exact, AppModel};
+use crate::model::{self, fmt, usd, usd_exact, AppModel};
 use crate::theme;
 use crate::ui::{self, BoxAdd};
 
@@ -24,20 +25,9 @@ pub fn build(m: &AppModel, rebuild: Rc<dyn Fn()>) -> gtk::Widget {
     let series: Vec<(Date, DayEntry)> = snap.series.iter().map(|d| (model::date_of(&d.date), d.clone())).collect();
     drop(snap);
     let today = model::today();
-    let this_month = today.first_of_month();
-    let first = series.iter().map(|(d, _)| *d).min().unwrap_or(this_month).first_of_month();
-    let mut months = vec![];
-    let mut mo = first.min(this_month);
-    while mo <= this_month {
-        months.push(mo);
-        mo = mo.checked_add(jiff::Span::new().months(1)).unwrap();
-    }
+    let months = months_until(series.iter().map(|(d, _)| *d).min(), today);
     let current = VISIBLE_MONTH.get().filter(|v| months.contains(v)).unwrap_or(*months.last().unwrap());
-
-    // Scale shared by all months so colors are comparable: the 95th percentile active day.
-    let mut costs: Vec<f64> = series.iter().map(|(_, d)| d.cost).filter(|c| *c > 0.0).collect();
-    costs.sort_by(f64::total_cmp);
-    let scale_max = if costs.is_empty() { 1.0 } else { costs[((costs.len() as f64 * 0.95) as usize).min(costs.len() - 1)].max(0.01) };
+    let scale_max = scale_max(series.iter().map(|(_, d)| d.cost));
 
     let title = ui::label(&current.strftime("%B %Y").to_string(), &["title-3"]);
     let today_btn = gtk::Button::with_label("Today");
@@ -116,7 +106,6 @@ fn month_grid(month: Date, scale_max: f64, series: &[(Date, DayEntry)], rebuild:
         l.set_xalign(0.5);
         g.attach(&l, c as i32, 0, 1, 1);
     }
-    let lead = month.weekday().to_monday_zero_offset() as i32;
     let today = model::today();
     let selected = SELECTED_DAY.get();
     for d in 0..month.days_in_month() as i32 {
@@ -131,24 +120,54 @@ fn month_grid(month: Date, scale_max: f64, series: &[(Date, DayEntry)], rebuild:
             rb();
         });
         cell.add_controller(click);
-        let slot = lead + d;
-        g.attach(&cell, slot % 7, 1 + slot / 7, 1, 1);
+        let (column, row) = grid_position(day);
+        g.attach(&cell, column, row, 1, 1);
     }
     g.upcast()
 }
 
+/// Every month from the one holding the first day with data (or today's) through today's.
+fn months_until(first_day: Option<Date>, today: Date) -> Vec<Date> {
+    let this_month = today.first_of_month();
+    let mut months = vec![];
+    let mut mo = first_day.unwrap_or(this_month).first_of_month().min(this_month);
+    while mo <= this_month {
+        months.push(mo);
+        mo = mo.checked_add(jiff::Span::new().months(1)).unwrap();
+    }
+    months
+}
+
+/// Color scale shared by all months so they're comparable: the 95th percentile active day (at least 1¢), 1 with no data.
+fn scale_max(costs: impl Iterator<Item = f64>) -> f64 {
+    let mut costs: Vec<f64> = costs.filter(|c| *c > 0.0).collect();
+    costs.sort_by(f64::total_cmp);
+    if costs.is_empty() {
+        return 1.0;
+    }
+    costs[((costs.len() as f64 * 0.95) as usize).min(costs.len() - 1)].max(0.01)
+}
+
+/// (column, row) of a day in its month's Monday-first grid; row 0 holds the weekday names.
+fn grid_position(day: Date) -> (i32, i32) {
+    let slot = day.first_of_month().weekday().to_monday_zero_offset() as i32 + day.day() as i32 - 1;
+    (slot % 7, 1 + slot / 7)
+}
+
+/// CSS class for a day's fill: a ramp step relative to `scale_max`, or `empty` without spend.
+fn fill_class(value: f64, scale_max: f64) -> String {
+    match theme::ramp_index((value / scale_max).min(1.0)) {
+        Some(i) if value > 0.0 => format!("ramp-{i}"),
+        _ => "empty".into(),
+    }
+}
+
 fn day_cell(day: Date, entry: Option<&DayEntry>, scale_max: f64, selected: bool, is_today: bool, future: bool) -> gtk::Box {
     let value = entry.map(|e| e.cost).unwrap_or(0.0);
-    let fraction = (value / scale_max).min(1.0);
     let b = ui::vbox(0);
     b.add_css_class("day-cell");
     b.set_size_request(-1, 40);
-    if value > 0.0 {
-        let i = ((fraction * theme::RAMP_LEN as f64).ceil() as usize).saturating_sub(1).min(theme::RAMP_LEN - 1);
-        b.add_css_class(&format!("ramp-{i}"));
-    } else {
-        b.add_css_class("empty");
-    }
+    b.add_css_class(&fill_class(value, scale_max));
     if selected {
         b.add_css_class("selected");
     } else if is_today {
@@ -168,7 +187,7 @@ fn day_cell(day: Date, entry: Option<&DayEntry>, scale_max: f64, selected: bool,
     }
     b.add(&top);
     if value > 0.0 {
-        let a = ui::label(&usd_compact(value), &["caption-heading", "numeric"]);
+        let a = ui::label(&CurrencyFormat::axis(value), &["caption-heading", "numeric"]);
         a.set_vexpand(true);
         a.set_valign(gtk::Align::End);
         b.add(&a);
@@ -194,7 +213,7 @@ fn month_summary(series: &[(Date, DayEntry)], month: Date) -> gtk::Widget {
             item("Month total", &usd(total)),
             item("Avg / active day", &if days.is_empty() { "—".into() } else { usd(total / days.len() as f64) }),
             item("Active days", &days.len().to_string()),
-            item("Busiest", &busiest.map(|(d, e)| format!("{} · {}", d.day(), usd_compact(e.cost))).unwrap_or("—".into())),
+            item("Busiest", &busiest.map(|(d, e)| format!("{} · {}", d.day(), CurrencyFormat::axis(e.cost))).unwrap_or("—".into())),
         ],
     )
     .upcast()
@@ -251,4 +270,76 @@ fn day_detail(m: &AppModel, day: Date, close: Rc<dyn Fn()>) -> gtk::Widget {
         }
     }
     ui::card(Some(&title), Some(trailing.upcast_ref()), &[v.upcast_ref()]).upcast()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jiff::civil::{date, Weekday};
+
+    #[test]
+    fn grid_starts_on_monday() {
+        // November 2026 starts on a Sunday and needs six week rows.
+        assert_eq!(grid_position(date(2026, 11, 1)), (6, 1));
+        assert_eq!(grid_position(date(2026, 11, 2)), (0, 2));
+        assert_eq!(grid_position(date(2026, 11, 26)), (3, 5));
+        assert_eq!(grid_position(date(2026, 11, 30)), (0, 6));
+        // February 2021 starts on a Monday and fits in four.
+        assert_eq!(grid_position(date(2021, 2, 1)), (0, 1));
+        assert_eq!(grid_position(date(2021, 2, 28)), (6, 4));
+    }
+
+    #[test]
+    fn grid_columns_match_weekdays_and_cells_are_unique() {
+        let mut month = date(2023, 1, 1);
+        while month < date(2028, 1, 1) {
+            let mut seen = std::collections::HashSet::new();
+            for d in 0..month.days_in_month() {
+                let day = month.checked_add(jiff::Span::new().days(d as i64)).unwrap();
+                let (column, row) = grid_position(day);
+                assert_eq!(column, day.weekday().to_monday_zero_offset() as i32, "{day}");
+                assert!((1..=6).contains(&row), "{day}");
+                assert!(seen.insert((column, row)), "{day}");
+            }
+            assert_eq!(grid_position(month).1, 1);
+            month = month.checked_add(jiff::Span::new().months(1)).unwrap();
+        }
+        assert_eq!(date(2026, 11, 2).weekday(), Weekday::Monday);
+    }
+
+    #[test]
+    fn months_from_first_data_to_today() {
+        let today = date(2026, 11, 26);
+        assert_eq!(months_until(None, today), [date(2026, 11, 1)]);
+        assert_eq!(months_until(Some(date(2026, 11, 3)), today), [date(2026, 11, 1)]);
+        assert_eq!(months_until(Some(date(2026, 9, 30)), today), [date(2026, 9, 1), date(2026, 10, 1), date(2026, 11, 1)]);
+        assert_eq!(months_until(Some(date(2025, 12, 31)), date(2026, 1, 1)), [date(2025, 12, 1), date(2026, 1, 1)]);
+        // Data dated after today (clock changes) still shows this month only.
+        assert_eq!(months_until(Some(date(2027, 2, 1)), today), [date(2026, 11, 1)]);
+        assert_eq!(months_until(Some(date(2024, 11, 26)), today).len(), 25);
+    }
+
+    #[test]
+    fn scale_is_the_95th_percentile() {
+        assert_eq!(scale_max(std::iter::empty()), 1.0);
+        assert_eq!(scale_max([0.0, -3.0, f64::NAN].into_iter()), 1.0);
+        assert_eq!(scale_max([4.0].into_iter()), 4.0);
+        assert_eq!(scale_max([0.001].into_iter()), 0.01);
+        let costs: Vec<f64> = (1..=100).map(|i| i as f64).collect();
+        assert_eq!(scale_max(costs.iter().rev().copied()), 96.0);
+        assert_eq!(scale_max([1.0, 2.0, 3.0, 1000.0].into_iter()), 1000.0);
+    }
+
+    #[test]
+    fn fill_classes() {
+        assert_eq!(fill_class(0.0, 10.0), "empty");
+        assert_eq!(fill_class(-1.0, 10.0), "empty");
+        assert_eq!(fill_class(f64::NAN, 10.0), "empty");
+        assert_eq!(fill_class(0.001, 10.0), "ramp-0");
+        assert_eq!(fill_class(2.0, 10.0), "ramp-0");
+        assert_eq!(fill_class(5.0, 10.0), "ramp-2");
+        assert_eq!(fill_class(10.0, 10.0), "ramp-4");
+        assert_eq!(fill_class(500.0, 10.0), "ramp-4");
+        assert_eq!(fill_class(f64::INFINITY, 10.0), "ramp-4");
+    }
 }
