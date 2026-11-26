@@ -19,6 +19,7 @@ Claude usage from the menu bar or tray: plan limits on a Max or Pro subscription
 
 <img width="526" height="865" alt="image" src="https://github.com/user-attachments/assets/93990b7c-d324-46aa-934f-d8a85c4100c8" />
 
+<img width="3632" height="3166" alt="windows-api" src="https://github.com/user-attachments/assets/a01abc00-e462-495e-b34b-1a15352cfbf8" />
 
 ## Where the numbers come from
 
