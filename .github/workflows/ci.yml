@@ -1,0 +1,91 @@
+name: CI
+
+# The only workflow triggered by pushes and pull requests. It runs the platform builds that a change affects, then
+# reports "CI passed", the check master requires. Path filters on a workflow's own trigger can't be used with a
+# required check: a pull request that matches none of them would wait for it forever.
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+# Read-only token: the workflows only build and upload artifacts.
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      core: ${{ steps.diff.outputs.core }}
+      apple: ${{ steps.diff.outputs.apple }}
+      linux: ${{ steps.diff.outputs.linux }}
+      windows: ${{ steps.diff.outputs.windows }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Find affected builds
+        id: diff
+        env:
+          # A pull request checks out a merge commit, whose first parent is the base branch.
+          BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before }}
+        run: |
+          set -euo pipefail
+          # Prints whether anything differs from BASE in core/, shared/, this file (they affect every build)
+          # or the given paths. Any git error fails the job.
+          changed() {
+            local status=0
+            git diff --quiet --no-renames "$BASE" HEAD -- core shared .github/workflows/ci.yml "$@" || status=$?
+            [ "$status" -le 1 ] || exit "$status"
+            if [ "$status" -eq 1 ]; then echo true; else echo false; fi
+          }
+          core=$(changed .github/workflows/core.yml)
+          apple=$(changed apple .github/workflows/apple.yml)
+          linux=$(changed linux .github/workflows/linux.yml)
+          windows=$(changed windows .github/workflows/windows.yml)
+          printf '%s\n' "core=$core" "apple=$apple" "linux=$linux" "windows=$windows" | tee -a "$GITHUB_OUTPUT"
+
+  core:
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
+    uses: ./.github/workflows/core.yml
+
+  apple:
+    needs: changes
+    if: needs.changes.outputs.apple == 'true'
+    uses: ./.github/workflows/apple.yml
+
+  linux:
+    needs: changes
+    if: needs.changes.outputs.linux == 'true'
+    uses: ./.github/workflows/linux.yml
+
+  windows:
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    uses: ./.github/workflows/windows.yml
+    secrets:
+      NACUT_CERT_PFX: ${{ secrets.NACUT_CERT_PFX }}
+      NACUT_CERT_PASSWORD: ${{ secrets.NACUT_CERT_PASSWORD }}
+
+  # Every build job above must be listed in `needs`, or its failure won't block merging.
+  passed:
+    name: CI passed
+    needs: [changes, core, apple, linux, windows]
+    # Without always() this job is skipped when a build fails, and GitHub counts a skipped check as passing.
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check results
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          [ "$CHANGES" = success ] || exit 1
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) exit 1 ;;
+            esac
+          done

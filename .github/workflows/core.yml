@@ -1,10 +1,8 @@
 name: Core
 
+# Called by ci.yml when this build is affected.
 on:
-  push:
-    paths: ['core/**', 'shared/**', '.github/workflows/core.yml']
-  pull_request:
-    paths: ['core/**', 'shared/**', '.github/workflows/core.yml']
+  workflow_call:
 
 # Read-only token: the workflows only build and upload artifacts.
 permissions:
