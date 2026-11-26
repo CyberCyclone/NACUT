@@ -48,5 +48,6 @@ MAP
 rm -rf "$PKG/nacutFFI.xcframework"
 xcodebuild -create-xcframework -library "$OUT/libnacut_ffi.a" -headers "$OUT/include" \
   -output "$PKG/nacutFFI.xcframework" >/dev/null
+mkdir -p "$PKG/Sources/NacutCore"   # holds only the git-ignored bindings, so a fresh clone doesn't have it
 cp "$OUT/gen/nacut.swift" "$PKG/Sources/NacutCore/nacut.swift"
 echo "NacutCore ready: $(du -sh "$PKG/nacutFFI.xcframework" | cut -f1) xcframework, $(wc -l < "$PKG/Sources/NacutCore/nacut.swift") lines of Swift bindings"
