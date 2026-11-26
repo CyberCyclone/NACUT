@@ -7,8 +7,11 @@
 #   ~/.claude, ~/.config/claude read-only: Claude Code transcripts and its sign-in file
 #   org.kde.StatusNotifierWatcher  the tray icon
 #   org.freedesktop.secrets     the optional API key, kept in the keyring
-#   org.freedesktop.Flatpak     runs the host's `claude` to refresh its sign-in (about every 8 hours);
-#                               remove it if you don't use plan limits (they then need `claude` run by hand)
+#   org.freedesktop.Flatpak     runs the host's `claude` to refresh its sign-in (about every 8 hours).
+#                               NOTE: this lets the app run any command on the host, so the sandbox no longer
+#                               contains it. Remove it (and turn off "Refresh sign-in automatically") if you
+#                               don't want that; plan limits then need `claude` run by hand.
+#   Open at login uses the XDG Background portal (no extra permission).
 app-id: io.github.cybercyclone.nacut
 runtime: org.gnome.Platform
 runtime-version: '51'
@@ -36,7 +39,7 @@ modules:
   - name: nacut
     buildsystem: simple
     build-commands:
-      - cargo build --release --manifest-path linux/Cargo.toml
+      - cargo build --release --locked --manifest-path linux/Cargo.toml
       - install -Dm755 linux/target/release/nacut-gtk /app/bin/nacut-gtk
       - install -Dm644 linux/data/io.github.cybercyclone.nacut.desktop /app/share/applications/io.github.cybercyclone.nacut.desktop
       - install -Dm644 linux/data/icons/io.github.cybercyclone.nacut-128.png /app/share/icons/hicolor/128x128/apps/io.github.cybercyclone.nacut.png

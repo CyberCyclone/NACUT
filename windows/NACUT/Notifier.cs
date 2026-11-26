@@ -54,33 +54,52 @@ static class Startup
     const string Name = "NACUT";
     const string TaskId = "NACUTStartup";
 
+    /// <summary>
+    /// Never throws: a failed read reports off, and a failed change is logged and leaves the old state,
+    /// so read it back after setting it.
+    /// </summary>
     public static bool Enabled
     {
         get
         {
-            if (Packaging.IsPackaged)
+            try
             {
-                var state = Task.Run(async () => (await Windows.ApplicationModel.StartupTask.GetAsync(TaskId)).State).Result;
-                return state is Windows.ApplicationModel.StartupTaskState.Enabled or Windows.ApplicationModel.StartupTaskState.EnabledByPolicy;
+                if (Packaging.IsPackaged)
+                {
+                    var state = Task.Run(async () => (await Windows.ApplicationModel.StartupTask.GetAsync(TaskId)).State).Result;
+                    return state is Windows.ApplicationModel.StartupTaskState.Enabled or Windows.ApplicationModel.StartupTaskState.EnabledByPolicy;
+                }
+                using var key = Registry.CurrentUser.OpenSubKey(RunKey);
+                return key?.GetValue(Name) is string;
             }
-            using var key = Registry.CurrentUser.OpenSubKey(RunKey);
-            return key?.GetValue(Name) is string;
+            catch (Exception e)
+            {
+                Log.Write($"Open at login: reading the state failed: {e.GetBaseException().Message}");
+                return false;
+            }
         }
         set
         {
-            if (Packaging.IsPackaged)
+            try
             {
-                Task.Run(async () =>
+                if (Packaging.IsPackaged)
                 {
-                    var task = await Windows.ApplicationModel.StartupTask.GetAsync(TaskId);
-                    if (value) await task.RequestEnableAsync();
-                    else task.Disable();
-                }).Wait();
-                return;
+                    Task.Run(async () =>
+                    {
+                        var task = await Windows.ApplicationModel.StartupTask.GetAsync(TaskId);
+                        if (value) await task.RequestEnableAsync();
+                        else task.Disable();
+                    }).Wait();
+                    return;
+                }
+                using var key = Registry.CurrentUser.CreateSubKey(RunKey);
+                if (value) key.SetValue(Name, $"\"{Environment.ProcessPath}\" --background");
+                else key.DeleteValue(Name, false);
             }
-            using var key = Registry.CurrentUser.CreateSubKey(RunKey);
-            if (value) key.SetValue(Name, $"\"{Environment.ProcessPath}\" --background");
-            else key.DeleteValue(Name, false);
+            catch (Exception e)
+            {
+                Log.Write($"Open at login: turning it {(value ? "on" : "off")} failed: {e.GetBaseException().Message}");
+            }
         }
     }
 }

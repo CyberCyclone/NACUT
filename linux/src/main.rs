@@ -52,6 +52,9 @@ fn main() -> glib::ExitCode {
             gtk::style_context_add_provider_for_display(&gtk::gdk::Display::default().expect("display"), &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
 
             let render_mode = render_to.is_some();
+            if render_mode {
+                prefs::set_read_only();
+            }
             let (model, events) = AppModel::new(render_mode);
 
             let prefs = Preferences::new(model.clone());

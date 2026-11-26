@@ -21,7 +21,7 @@ $targets = @{ 'ARM64' = 'aarch64-pc-windows-msvc'; 'x64' = 'x86_64-pc-windows-ms
 $archs = if ($All) { @('ARM64', 'x64') } else { @($hostArch) }
 
 if (-not (Get-Command uniffi-bindgen-cs -ErrorAction SilentlyContinue)) {
-    cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag $bindgenTag
+    cargo install --locked uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag $bindgenTag
 }
 
 Push-Location $core
@@ -29,7 +29,7 @@ try {
     foreach ($arch in $archs) {
         $triple = $targets[$arch]
         rustup target add $triple 2>&1 | Out-Null
-        cargo build --release -p nacut-ffi --target $triple
+        cargo build --release --locked -p nacut-ffi --target $triple
         if ($LASTEXITCODE -ne 0) { throw "cargo build failed for $triple" }
         $out = Join-Path $app "native\$arch"
         New-Item -ItemType Directory -Force $out | Out-Null

@@ -22,8 +22,8 @@ Claude usage from the menu bar or tray: plan limits on a Max or Pro subscription
 | Source | What it covers | Setup |
 |---|---|---|
 | Local logs (default) | Claude Code in the desktop app's Code tab, VS Code, and the CLI. Priced at Anthropic list prices. | None |
-| Max/Pro plan limits | 5-hour, weekly and per-model weekly limit %, including desktop-app chats. Uses the Claude Code CLI's sign-in; when it expires (about every 8 h) the app has `claude` refresh it with a one-word Haiku prompt. | Install the [Claude Code CLI](https://claude.com/claude-code) and sign in once (`claude`, then `/login`), then Settings → Data Sources → toggle on. On macOS, allow Keychain access. |
-| Anthropic Usage & Cost API | Exact billed cost (after discounts) | Settings → Data Sources → paste an Admin key (Console) or a `read:analytics` key (Enterprise) |
+| Max/Pro plan limits | 5-hour, weekly and per-model weekly limit %, including desktop-app chats. Uses the Claude Code CLI's sign-in; when it expires (about every 8 h) the app has `claude` refresh it with a one-word Haiku prompt (Settings → *Refresh sign-in automatically*, on by default). | Install the [Claude Code CLI](https://claude.com/claude-code) and sign in once (`claude`, then `/login`), then Settings → Data Sources → toggle on. On macOS, allow Keychain access. |
+| Anthropic Usage & Cost API | Exact billed cost (after discounts) | Settings → Data Sources → paste a `read:analytics` key (Enterprise) or, for Console orgs, an Admin key (see [Privacy and security](#privacy-and-security)) |
 
 In **Hybrid** mode, billed API data is used for every day it covers (it lags 4–24 h). Later hours
 come from local logs, scaled by your recent billed ÷ list-price ratio. The Models tab shows billed vs local per day.
@@ -36,8 +36,48 @@ History is cached, so totals survive Claude Code's transcript cleanup:
 | Windows | `%APPDATA%\NACUT\` | `%APPDATA%\NACUT\settings.json` | Credential Manager |
 | Linux | `~/.local/share/nacut/` | `~/.config/nacut/settings.json` | Secret Service (GNOME Keyring, KWallet) |
 
+Cache and settings files are created readable only by you (0600, in a 0700 folder) on macOS and Linux.
+
 On Windows, Claude Code installed inside **WSL** is included automatically (Settings → Data Sources → *Include Claude Code in WSL*).
 Any other folder of transcripts can be added under *Local transcript folders*.
+
+## Privacy and security
+
+NACUT has **no analytics, telemetry, crash reporting or update checks**, and no third-party SDKs. ("Analytics" in the
+code means Anthropic's own Usage & Cost API.) Everything it sends goes to `api.anthropic.com`, and only for features you turn on:
+
+| What is sent | Where | When |
+|---|---|---|
+| Your Claude Code sign-in token | `GET api.anthropic.com/api/oauth/usage` | Plan limits on: at start and on refresh |
+| Your Usage & Cost API key | `GET api.anthropic.com/v1/organizations/analytics/cost` | Only after you paste a key |
+| A one-word prompt ("Reply with OK") to Haiku, by running your own `claude` CLI | Anthropic, as you, through Claude Code | Plan limits on, *Refresh sign-in automatically* on, and the sign-in has expired: at most every 15 minutes, in practice about every 8 hours |
+
+What stays on your computer:
+
+- **Transcripts are only read for usage numbers.** Message text is never decoded; the app keeps model, token counts,
+  timestamps, project folder, session ID and entry point per message.
+- **The sign-in token** is read from Claude Code's Keychain item (macOS) or `~/.claude/.credentials.json`. NACUT never
+  writes, refreshes or copies it.
+- **The API key** is kept only in the OS secret store, and is only stored if Anthropic accepts it (or couldn't be reached).
+- **The `claude` refresh** runs with no tools (`--tools ""`), no MCP servers, only your user settings (no project or
+  local settings or their hooks), from a private folder, and isn't saved to your history. Turn it off in Settings and
+  run `claude` yourself when limits pause.
+
+For IT and security teams:
+
+- **Proxies and TLS inspection:** requests use the OS trust store as well as the bundled Mozilla roots, honour
+  `HTTPS_PROXY` / `ALL_PROXY`, and refuse plain HTTP. (Windows system proxy settings that aren't in the environment
+  aren't read.)
+- **Admin keys:** a Console Admin key (`sk-ant-admin…`) can manage the whole organization (API keys, members, workspaces).
+  Prefer a Claude Enterprise key scoped to `read:analytics`; the apps warn when an Admin key is pasted. With an
+  organization-wide key, the app shows organization-wide spend unless *Count usage from* picks one person.
+- **macOS:** the app is built with the hardened runtime and without `get-task-allow` in Release. For distribution,
+  sign with a Developer ID and notarize (see below). The widget is sandboxed; the app isn't, because it reads
+  `~/.claude` and runs `claude`.
+- **Linux Flatpak:** `--talk-name=org.freedesktop.Flatpak` (needed for the `claude` refresh) lets the app run commands on
+  the host; remove it from the manifest if you don't want that.
+- **Builds:** every Cargo build uses committed lockfiles (`--locked`), CI actions are pinned to commit SHAs with a
+  read-only token, and the Flatpak generator script is pinned to a commit.
 
 ## macOS
 
@@ -56,6 +96,15 @@ Then turn on **Settings → General → Open at login**.
 **If the widget doesn't appear in the gallery:** the app is ad-hoc signed ("Sign to Run Locally"). Add your Apple ID in
 Xcode → Settings → Accounts (a free Personal Team is fine), set `DEVELOPMENT_TEAM` and
 `CODE_SIGN_IDENTITY: "Apple Development"` in `project.yml`, and rebuild.
+
+**Distributing to other Macs (e.g. through MDM):** sign with a *Developer ID Application* certificate and notarize, so
+Gatekeeper accepts it and the Keychain prompt is asked once rather than after every build:
+
+```bash
+xcodebuild ... CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM=<TEAMID> build
+ditto -c -k --keepParent NACUT.app NACUT.zip
+xcrun notarytool submit NACUT.zip --keychain-profile <profile> --wait && xcrun stapler staple NACUT.app
+```
 
 ## Windows 10 / 11
 
@@ -114,7 +163,7 @@ linux/     Linux app (GTK4 + libadwaita, Rust) on the core directly
 | Panel (all four tabs) | ✓ | ✓ | ✓ |
 | Widget | ✓ | ✓ (MSIX) | — (use Waybar) |
 | Notifications | ✓ | ✓ | ✓ |
-| Open at login | ✓ | ✓ | ✓ (XDG autostart) |
+| Open at login | ✓ | ✓ | ✓ (XDG autostart; Background portal in Flatpak) |
 | Plan limits, API, Hybrid | ✓ | ✓ | ✓ |
 | WSL transcripts | — | ✓ | — |
 
@@ -126,7 +175,8 @@ cargo run -p nacut-cli -- summary         # totals and per-model cost from this 
 cargo run -p nacut-cli -- status --waybar # status-bar JSON (Waybar, Polybar…)
 ```
 
-Every app can render its views to PNGs without network or credential access, which is how the UI is checked:
+Every app can render its views to PNGs without network or credential access, and without touching the real widget
+or settings, which is how the UI is checked:
 
 ```bash
 /Applications/NACUT.app/Contents/MacOS/NACUT --render-to /tmp/shots --limits-json shared/fixtures/limits-live.json

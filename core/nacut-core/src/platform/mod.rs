@@ -2,12 +2,13 @@
 //! refreshing it through the CLI, API key storage, WSL discovery and file watching.
 
 pub mod credentials;
+pub mod net;
 pub mod refresher;
 pub mod secrets;
 pub mod watcher;
 pub mod wsl;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::scanner::home_dir;
 
@@ -51,6 +52,47 @@ pub fn claude_config_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Creates `dir` (and parents) if needed. On Unix the folder itself is made private (0700), since it
+/// holds project paths, session IDs and billing data.
+pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+/// Atomically writes `bytes` to `path` (temp file, then rename), readable only by this user on Unix (0600).
+/// Windows: the per-user `%APPDATA%` folder's ACL already keeps other users out.
+pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        create_private_dir(dir)?;
+    }
+    let tmp = path.with_extension("tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let result = opts.open(&tmp).and_then(|mut f| {
+        f.write_all(bytes)?;
+        f.sync_all()
+    });
+    match result.and_then(|_| std::fs::rename(&tmp, path)) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
 /// Hides the console window that Windows would otherwise flash for child processes.
 #[cfg(windows)]
 pub(crate) fn no_window(cmd: &mut std::process::Command) {
@@ -61,3 +103,31 @@ pub(crate) fn no_window(cmd: &mut std::process::Command) {
 
 #[cfg(not(windows))]
 pub(crate) fn no_window(_cmd: &mut std::process::Command) {}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn writes_private_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub").join("f.json");
+        super::write_private(&path, b"one").unwrap();
+        super::write_private(&path, b"two").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"two");
+        assert!(!path.with_extension("tmp").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+    }
+
+    #[test]
+    fn refresh_runs_without_tools_or_project_settings() {
+        let args = super::refresher::ARGS;
+        let after = |flag: &str| args.iter().position(|a| *a == flag).map(|i| args[i + 1]);
+        assert_eq!(after("--tools"), Some(""));
+        assert_eq!(after("--setting-sources"), Some("user"));
+        assert!(args.contains(&"--strict-mcp-config"));
+    }
+}

@@ -73,6 +73,8 @@ struct WidgetSnapshot: Codable, Sendable {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .iso8601
         try e.encode(self).write(to: url, options: .atomic)
+        // Spend figures: readable only by this user (the widget runs as the same user).
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     static let placeholder = WidgetSnapshot(

@@ -46,11 +46,8 @@ impl AlertLedger {
 
     fn save(&self) {
         if let Some(p) = &self.path {
-            if let Some(dir) = p.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
             if let Ok(d) = serde_json::to_vec(&self.fired) {
-                let _ = std::fs::write(p, d);
+                let _ = crate::platform::write_private(p, &d);
             }
         }
     }

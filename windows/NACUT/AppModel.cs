@@ -14,6 +14,7 @@ sealed class AppModel
     public NacutEngine Engine { get; }
     readonly DispatcherQueue dispatcher;
     readonly Bridge bridge;
+    readonly bool renderMode;
     bool reloadScheduled;
 
     public Snapshot Snap { get; private set; }
@@ -25,13 +26,16 @@ sealed class AppModel
     public AppModel(DispatcherQueue dispatcher, bool renderMode)
     {
         this.dispatcher = dispatcher;
-        Engine = NacutEngine.Standard();
+        this.renderMode = renderMode;
+        // Screenshots run on a throwaway copy of the data folder, so they never change the real settings or caches.
+        Engine = renderMode ? DebugRenderer.CreateEngine() : NacutEngine.Standard();
         Snap = Engine.Snapshot();
         bridge = new Bridge(this);
         Engine.SetObserver(bridge);
         if (renderMode)
         {
             // Screenshots: read the logs once; no background work, network or credential access.
+            Prefs.ReadOnly = true;
             Engine.ScanNow();
             Snap = Engine.Snapshot();
             return;
@@ -123,6 +127,7 @@ sealed class AppModel
 
     public async Task LoadActorsAsync()
     {
+        if (renderMode) return; // no network for screenshots
         await Task.Run(() => Engine.LoadActors());
         Reload();
     }
@@ -196,9 +201,13 @@ static class Prefs
 
     public static string Get(string key, string fallback) => Values.TryGetValue(key, out var v) ? v : fallback;
 
+    /// <summary>Screenshots (`--render-to`): remember changes in memory only, never write ui.json.</summary>
+    public static bool ReadOnly { get; set; }
+
     public static void Set(string key, string value)
     {
         Values[key] = value;
+        if (ReadOnly) return;
         try
         {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
@@ -211,18 +220,39 @@ static class Prefs
         Enum.TryParse<StatRange>(Get(key, nameof(StatRange.Cycle)), out var r) ? r : StatRange.Cycle;
 }
 
+/// <summary>
+/// Diagnostics in %LOCALAPPDATA%\NACUT\nacut.log. Past 1 MB it moves to nacut.log.old (replacing the
+/// previous one) and starts fresh. Only lifecycle events and error messages go here: never settings,
+/// API keys or credentials.
+/// </summary>
 static class Log
 {
+    const long MaxBytes = 1024 * 1024;
     static readonly string Path = System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NACUT", "nacut.log");
+    static readonly object gate = new();
 
     public static void Write(string message)
     {
         try
         {
-            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
-            File.AppendAllText(Path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+            lock (gate)
+            {
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
+                RotateIfFull();
+                File.AppendAllText(Path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+            }
         }
         catch { }
+    }
+
+    static void RotateIfFull()
+    {
+        try
+        {
+            var info = new FileInfo(Path);
+            if (info.Exists && info.Length > MaxBytes) File.Move(Path, Path + ".old", overwrite: true);
+        }
+        catch { } // e.g. another NACUT process has it open: keep appending and try again next time
     }
 }

@@ -124,14 +124,9 @@ impl LogCache {
             .unwrap_or_else(Self::new)
     }
 
-    /// Atomic save (write to a temp file, then rename).
+    /// Atomic save (write to a temp file, then rename), readable only by this user.
     pub fn save(&self, path: &Path) -> io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
         let data = serde_json::to_vec(self).map_err(io::Error::other)?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, data)?;
-        std::fs::rename(&tmp, path)
+        crate::platform::write_private(path, &data)
     }
 }

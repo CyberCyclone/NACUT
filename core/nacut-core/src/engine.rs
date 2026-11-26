@@ -504,10 +504,15 @@ impl Engine {
         if key.is_empty() {
             return ConnectionStatus::NotConfigured;
         }
-        let status = AnalyticsClient::new(key).test_connection(Timestamp::now());
+        let mut status = AnalyticsClient::new(key).test_connection(Timestamp::now());
         let had_key = self.inner.state.read().unwrap().has_api_key;
-        if status.is_usable() || !had_key {
-            let _ = secrets::save_analytics_key(key);
+        // Keep a key the API accepted, or one that couldn't be checked because the network failed
+        // (when there's no key yet). A key the API rejected is never stored.
+        let unverified = matches!(status, ConnectionStatus::Failed(_));
+        if status.is_usable() || (unverified && !had_key) {
+            if let Err(e) = secrets::save_analytics_key(key) {
+                status = ConnectionStatus::Failed(format!("Couldn't save the key to the system keychain: {e}"));
+            }
         }
         {
             let mut s = self.inner.state.write().unwrap();
@@ -819,13 +824,7 @@ fn save_cache(inner: &Inner, force: bool) {
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) {
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, bytes).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
-    }
+    let _ = crate::platform::write_private(path, bytes);
 }
 
 fn spawn_limits(inner: &Arc<Inner>) {
@@ -840,10 +839,14 @@ fn spawn_limits(inner: &Arc<Inner>) {
 }
 
 fn do_limits(inner: &Inner) {
-    if !inner.state.read().unwrap().settings.limits_enabled {
+    let (enabled, allow_refresh) = {
+        let s = inner.state.read().unwrap();
+        (s.settings.limits_enabled, s.settings.auto_refresh_sign_in)
+    };
+    if !enabled {
         return;
     }
-    let result = crate::limits_service::fetch();
+    let result = crate::limits_service::fetch(allow_refresh);
     let alerts = {
         let mut s = inner.state.write().unwrap();
         match result {

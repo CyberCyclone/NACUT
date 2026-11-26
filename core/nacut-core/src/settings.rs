@@ -58,6 +58,9 @@ pub struct Settings {
     pub api_actor_name: Option<String>,
 
     pub limits_enabled: bool,
+    /// When the Claude Code sign-in expires, run `claude` (a one-word Haiku prompt, no tools) so it
+    /// refreshes itself. Off: plan limits pause until the user runs `claude`.
+    pub auto_refresh_sign_in: bool,
 
     pub alerts_enabled: bool,
     pub alert_thresholds: Vec<u32>,
@@ -84,6 +87,7 @@ impl Default for Settings {
             api_actor_id: None,
             api_actor_name: None,
             limits_enabled: false,
+            auto_refresh_sign_in: true,
             alerts_enabled: true,
             alert_thresholds: vec![50, 80, 100],
             forecast_alert: true,
@@ -146,13 +150,8 @@ impl Settings {
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
         let data = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, data)?;
-        std::fs::rename(tmp, path)
+        crate::platform::write_private(path, &data)
     }
 
     pub fn sanitize(&mut self) {
@@ -162,6 +161,20 @@ impl Settings {
         self.alert_thresholds.retain(|t| (1..=1000).contains(t));
         self.alert_thresholds.sort_unstable();
         self.alert_thresholds.dedup();
+        // A cleared number field can arrive as NaN; JSON would store it as null and the file would no
+        // longer parse, resetting every setting.
+        let fix = |v: &mut f64| {
+            if !v.is_finite() || *v < 0.0 {
+                *v = 0.0;
+            }
+        };
+        fix(&mut self.monthly_budget);
+        fix(&mut self.plan_price);
+        for r in self.price_overrides.values_mut() {
+            for v in [&mut r.input, &mut r.output, &mut r.write5m, &mut r.write1h, &mut r.read] {
+                fix(v);
+            }
+        }
     }
 
     pub fn is_subscription(&self) -> bool {
@@ -211,6 +224,19 @@ pub fn detect_account(path: &Path) -> Option<(AccountMode, Option<f64>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_removes_nan_prices() {
+        let mut s = Settings::default();
+        s.monthly_budget = f64::NAN;
+        s.price_overrides.insert("m".into(), Rates { input: f64::NAN, output: -1.0, write5m: 1.0, write1h: f64::INFINITY, read: 2.0 });
+        s.sanitize();
+        let r = s.price_overrides["m"];
+        assert_eq!((r.input, r.output, r.write5m, r.write1h, r.read), (0.0, 0.0, 1.0, 0.0, 2.0));
+        assert_eq!(s.monthly_budget, 0.0);
+        let json = serde_json::to_vec(&s).unwrap();
+        assert!(Settings::parse(&json).is_some());
+    }
 
     #[test]
     fn loads_settings_with_byte_order_mark() {

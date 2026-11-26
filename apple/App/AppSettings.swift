@@ -95,6 +95,7 @@ final class AppSettings {
     var apiActorName: String? { didSet { d.set(apiActorName, forKey: "apiActorName"); onChange?() } }
 
     var limitsEnabled: Bool { didSet { d.set(limitsEnabled, forKey: "limitsEnabled"); onChange?() } }
+    var autoRefreshSignIn: Bool { didSet { d.set(autoRefreshSignIn, forKey: "autoRefreshSignIn"); onChange?() } }
 
     var alertsEnabled: Bool { didSet { d.set(alertsEnabled, forKey: "alertsEnabled"); onChange?() } }
     var alertThresholds: [Int] { didSet { d.set(alertThresholds, forKey: "alertThresholds"); onChange?() } }
@@ -122,6 +123,7 @@ final class AppSettings {
             "usageDisplay": UsageDisplay.limits.key,
             "dataSource": DataSourceMode.logs.key,
             "limitsEnabled": detected.limitsEnabled,
+            "autoRefreshSignIn": true,
             "alertsEnabled": true,
             "alertThresholds": [50, 80, 100],
             "forecastAlert": true,
@@ -138,6 +140,7 @@ final class AppSettings {
         apiActorId = d.string(forKey: "apiActorId")
         apiActorName = d.string(forKey: "apiActorName")
         limitsEnabled = d.bool(forKey: "limitsEnabled")
+        autoRefreshSignIn = d.bool(forKey: "autoRefreshSignIn")
         alertsEnabled = d.bool(forKey: "alertsEnabled")
         alertThresholds = (d.array(forKey: "alertThresholds") as? [Int]) ?? [50, 80, 100]
         forecastAlert = d.bool(forKey: "forecastAlert")
@@ -156,7 +159,7 @@ final class AppSettings {
             cycleStartDay: UInt8(min(max(cycleStartDay, 1), 28)), secondFigure: secondFigure,
             compactMenuBar: compactMenuBar, usageDisplay: usageDisplay, dataSource: dataSource,
             apiActorId: apiActorId, apiActorName: apiActorName, limitsEnabled: limitsEnabled,
-            alertsEnabled: alertsEnabled, alertThresholds: alertThresholds.map { UInt32(max($0, 0)) },
+            autoRefreshSignIn: autoRefreshSignIn, alertsEnabled: alertsEnabled, alertThresholds: alertThresholds.map { UInt32(max($0, 0)) },
             forecastAlert: forecastAlert, limitAlerts: limitAlerts, extraRoots: extraRoots,
             includeWsl: false, priceOverrides: priceOverrides)
     }

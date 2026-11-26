@@ -24,4 +24,4 @@ linux/target/
 linux/flatpak/build-dir/
 linux/flatpak/.flatpak-builder/
 linux/flatpak/cargo-sources.json
-linux/flatpak/flatpak-cargo-generator.py
+linux/flatpak/flatpak-cargo-generator*.py

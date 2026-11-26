@@ -151,7 +151,8 @@ static class CalendarTab
         if (models.Count == 0)
             return Ui.Card(title, trailing, Ui.Empty(total > 0 ? "Billed via API · no local detail for this day" : "No usage this day"));
 
-        var colorOf = models.ToDictionary(x => x.name, x => Theme.ForModel(x.id));
+        // Hourly parts are keyed by display name, which two model ids can share: the first (costliest) one's color wins.
+        var colorOf = models.GroupBy(x => x.name).ToDictionary(g => g.Key, g => Theme.ForModel(g.First().id));
         var stacks = Enumerable.Range(0, 24).Select(h => new Charts.Stack(day.ToDateTime(TimeOnly.MinValue).AddHours(h),
             hourly.Where(x => x.hour == h).Select(x => (x.model, x.cost, colorOf.GetValueOrDefault(x.model, Theme.Other))).ToList())).ToList();
         UIElement Tip(Charts.Stack s) => Ui.V(2,

@@ -279,7 +279,8 @@ static class Charts
             tip.Visibility = Visibility.Visible;
             tip.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             var w = tip.DesiredSize.Width;
-            Canvas.SetLeft(tip, Math.Clamp(dx - w / 2, 0, canvas.Width - w));
+            // A tooltip wider than the chart would make max < min, which Math.Clamp rejects.
+            Canvas.SetLeft(tip, Math.Clamp(dx - w / 2, 0, Math.Max(0, canvas.Width - w)));
             Canvas.SetTop(tip, 0);
         };
         overlay.PointerExited += (_, _) =>

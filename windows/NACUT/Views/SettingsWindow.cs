@@ -29,6 +29,11 @@ sealed class SettingsWindow : Window
     readonly List<Action> live = [];
     readonly IntPtr hwnd;
     string currentTag = "general";
+    bool closed;
+    /// <summary>The API's actor list is fetched at most once per key while this window is open.</summary>
+    bool actorsRequested;
+    /// <summary>An Admin key was connected in this window (the key itself is never kept).</summary>
+    bool adminKeySaved;
 
     public SettingsWindow(AppModel model)
     {
@@ -80,9 +85,21 @@ sealed class SettingsWindow : Window
         AppWindow.Resize(new SizeInt32((int)(920 * scale), (int)(700 * scale)));
         AppWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "nacut.ico"));
 
+        // Theme.Changed is static, so the handler is removed on close or closed windows would leak and keep rebuilding.
+        Action themeChanged = () => DispatcherQueue.TryEnqueue(() =>
+        {
+            if (closed) return;
+            root.RequestedTheme = Theme.ElementTheme;
+            Show(currentTag);
+        });
         m.Changed += OnChanged;
-        Closed += (_, _) => m.Changed -= OnChanged;
-        Theme.Changed += () => DispatcherQueue.TryEnqueue(() => { root.RequestedTheme = Theme.ElementTheme; Show(currentTag); });
+        Theme.Changed += themeChanged;
+        Closed += (_, _) =>
+        {
+            closed = true;
+            m.Changed -= OnChanged;
+            Theme.Changed -= themeChanged;
+        };
     }
 
     void OnChanged()
@@ -232,8 +249,20 @@ sealed class SettingsWindow : Window
         }));
 
         p.Children.Add(Section("Startup"));
-        p.Children.Add(Card("Open at login", "Start NACUT in the tray when you sign in to Windows",
-            Toggle(Startup.Enabled, on => Startup.Enabled = on), "\uE7E8"));
+        // Enabling can fail or be refused (policy, Task Manager), so the switch shows what Windows actually did.
+        ToggleSwitch login = null!;
+        var syncing = false;
+        login = Toggle(Startup.Enabled, on =>
+        {
+            if (syncing) return;
+            Startup.Enabled = on;
+            var actual = Startup.Enabled;
+            if (actual == on) return;
+            syncing = true;
+            login.IsOn = actual;
+            syncing = false;
+        });
+        p.Children.Add(Card("Open at login", "Start NACUT in the tray when you sign in to Windows", login, "\uE7E8"));
 
         p.Children.Add(Section("About"));
         p.Children.Add(Card("Messages tracked", null, Live(() => m.Snap.recordCount.ToString("N0"))));
@@ -327,7 +356,7 @@ sealed class SettingsWindow : Window
 
         p.Children.Add(Section("Subscription limits"));
         p.Children.Add(Card("Show Max/Pro plan limits",
-            "Shows your 5-hour and weekly limit usage, including desktop-app chats. Uses the Claude Code sign-in (~/.claude/.credentials.json) and the same unofficial endpoint as Claude Code's /usage, so it may stop working if Anthropic changes it. When the sign-in expires (about every 8 hours) NACUT has Claude Code refresh it by sending a one-word Haiku prompt (not saved to your history).",
+            "Shows your 5-hour and weekly limit usage, including desktop-app chats. Uses the Claude Code sign-in (~/.claude/.credentials.json) and the same unofficial endpoint as Claude Code's /usage, so it may stop working if Anthropic changes it.",
             Toggle(s.limitsEnabled, on => { m.Update(x => x with { limitsEnabled = on }); Rebuild(); }), "\uE9D9"));
         if (s.limitsEnabled)
         {
@@ -335,6 +364,9 @@ sealed class SettingsWindow : Window
                 : m.Status.limitsUpdatedMs is { } at ? $"✓ Updated {ProjectsTab.Relative(at.Local())}" : "Loading…", 12);
             status.Margin = new Thickness(4, 2, 0, 0);
             p.Children.Add(status);
+            p.Children.Add(Card("Refresh sign-in automatically",
+                "When the Claude Code sign-in expires (about every 8 hours), run `claude` with a one-word Haiku prompt so it refreshes itself. Off: run `claude` yourself when limits pause.",
+                Toggle(s.autoRefreshSignIn, on => m.Update(x => x with { autoRefreshSignIn = on }))));
         }
 
         p.Children.Add(Section("Anthropic Usage & Cost API"));
@@ -345,24 +377,48 @@ sealed class SettingsWindow : Window
             p.Children.Add(Card("Use", null, Combo([DataSourceMode.Logs, DataSourceMode.Hybrid, DataSourceMode.Api], s.dataSource, d => d.Title(),
                 d => m.Update(x => x with { dataSource = d }), 260)));
 
-            var actors = m.Api.actors;
-            var options = new List<(string? id, string title)> { (null, "Whole organization") };
-            options.AddRange(actors.Select(a => ((string?)a.id, $"{a.display} · {a.cost.UsdCompact()} last 30d")));
-            if (s.apiActorId is { } id && actors.All(a => a.id != id)) options.Add((id, s.apiActorName ?? id));
-            p.Children.Add(Card("Count usage from", "On a shared work org, pick yourself so the budget tracks only your usage.",
-                Combo(options, options.First(o => o.id == s.apiActorId), o => o.title,
-                    o => { m.Engine.SetActor(actors.FirstOrDefault(a => a.id == o.id)); m.Reload(); }, 260)));
+            // The people arrive after the page is built (LoadActorsOnceAsync), so the picker is rebuilt when they change.
+            SettingsCard ActorPicker()
+            {
+                var actors = m.Api.actors;
+                var current = m.Settings;
+                var options = new List<(string? id, string title)> { (null, "Whole organization") };
+                options.AddRange(actors.Select(a => ((string?)a.id, $"{a.display} · {a.cost.UsdCompact()} last 30d")));
+                if (current.apiActorId is { } id && actors.All(a => a.id != id)) options.Add((id, current.apiActorName ?? id));
+                return Card("Count usage from", "On a shared work org, pick yourself so the budget tracks only your usage.",
+                    Combo(options, options.First(o => o.id == current.apiActorId), o => o.title,
+                        o => { m.Engine.SetActor(actors.FirstOrDefault(a => a.id == o.id)); m.Reload(); }, 260));
+            }
+            var actorHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = ActorPicker() };
+            var shownActors = m.Api.actors.Select(a => a.id).ToList();
+            live.Add(() =>
+            {
+                if (m.Api.actors.Select(a => a.id).SequenceEqual(shownActors)) return;
+                shownActors = m.Api.actors.Select(a => a.id).ToList();
+                actorHost.Content = ActorPicker();
+            });
+            p.Children.Add(actorHost);
 
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             buttons.Children.Add(Btn("Test connection", async () => await m.TestApiAsync()));
             buttons.Children.Add(Btn("Refresh now", () => m.Engine.RefreshApi(true)));
-            buttons.Children.Add(Btn("Remove key", () => { m.Engine.RemoveApiKey(); m.Reload(); Rebuild(); }));
+            buttons.Children.Add(Btn("Remove key", () =>
+            {
+                m.Engine.RemoveApiKey();
+                actorsRequested = false;
+                adminKeySaved = false;
+                m.Reload();
+                Rebuild();
+            }));
             p.Children.Add(Card("Actions", null, buttons));
-            if (actors.Count == 0) _ = m.LoadActorsAsync();
+            if (adminKeySaved) p.Children.Add(AdminKeyWarning(true));
+            if (m.Api.actors.Count == 0) _ = LoadActorsOnceAsync();
         }
         else
         {
-            var key = new PasswordBox { PlaceholderText = "sk-ant-admin… or read:analytics key", MinWidth = 300 };
+            var key = new PasswordBox { PlaceholderText = "read:analytics or sk-ant-admin… key", MinWidth = 300 };
+            var adminWarning = AdminKeyWarning(false);
+            key.PasswordChanged += (_, _) => adminWarning.IsOpen = IsAdminKey(key.Password);
             var progress = new ProgressRing { IsActive = false, Width = 18, Height = 18 };
             var result = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(4, 2, 0, 0) };
             if (m.Api.state != ApiState.NotConfigured) result.Text = $"⚠ {m.Api.message}";
@@ -373,16 +429,25 @@ sealed class SettingsWindow : Window
                 if (k.Length == 0 || !connect.IsEnabled) return;
                 connect.IsEnabled = false;
                 progress.IsActive = true;
+                var admin = IsAdminKey(k);
                 var r = await m.SaveApiKeyAsync(k);
                 progress.IsActive = false;
                 connect.IsEnabled = true;
                 key.Password = "";
-                if (r.usable) Rebuild();
+                if (r.usable)
+                {
+                    adminKeySaved = admin;
+                    actorsRequested = false;
+                    Rebuild();
+                }
                 else result.Text = $"⚠ {r.message}";
             }
             connect.Click += (_, _) => Connect();
             key.KeyDown += (_, e) => { if (e.Key == Windows.System.VirtualKey.Enter) Connect(); };
-            p.Children.Add(Card("API key", null, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { key, connect, progress } }, "\uE8D7"));
+            p.Children.Add(Card("API key",
+                "Use a Claude Enterprise key scoped to read:analytics if you can. A Console Admin key (sk-ant-admin…) also works, but it can manage your whole organization, so only store one on a computer you trust.",
+                new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { key, connect, progress } }, "\uE8D7"));
+            p.Children.Add(adminWarning);
             p.Children.Add(result);
         }
         p.Children.Add(Note("Optional. Pulls exact billed cost from Anthropic's Usage & Cost API. Console orgs: an Admin API key. Claude Enterprise: a key with read:analytics created by your org's primary owner. If your org doesn't allow it, the test tells you and NACUT keeps using local logs. The key is stored only in Windows Credential Manager. API data lags 4–24 h, so Hybrid fills recent hours from local logs, scaled to match your billed rate."));
@@ -420,6 +485,34 @@ sealed class SettingsWindow : Window
         cacheCard.Header = Live(() => $"{m.Snap.recordCount:N0} messages cached", 14);
         p.Children.Add(cacheCard);
         return p;
+    }
+
+    static bool IsAdminKey(string key) => key.Trim().StartsWith("sk-ant-admin", StringComparison.Ordinal);
+
+    static InfoBar AdminKeyWarning(bool saved) => new()
+    {
+        IsOpen = saved, IsClosable = false, Severity = InfoBarSeverity.Warning,
+        Title = saved ? "Connected with an Admin key" : "This is an Admin key",
+        Message = "A Console Admin key can manage your whole organization, so only store one on a computer you trust. A Claude Enterprise key scoped to read:analytics is safer if you can get one.",
+    };
+
+    /// <summary>
+    /// Fetches the org's people for "Count usage from"; the reload that follows refreshes the picker (a live
+    /// update, not a page rebuild). Runs at most once per key while the window is open, so rebuilding the
+    /// page or an org with no people can't start another fetch.
+    /// </summary>
+    async Task LoadActorsOnceAsync()
+    {
+        if (actorsRequested) return;
+        actorsRequested = true;
+        try
+        {
+            await m.LoadActorsAsync();
+        }
+        catch (Exception e)
+        {
+            Log.Write($"Loading API actors failed: {e.Message}");
+        }
     }
 
     // MARK: Alerts
@@ -548,7 +641,10 @@ sealed class SettingsWindow : Window
         var result = await dialog.ShowAsync();
         if (result == ContentDialogResult.Primary)
         {
-            var rates = new Rates(input.Value, output.Value, w5.Value, w1.Value, read.Value);
+            // A cleared NumberBox reads NaN: keep that field's previous rate.
+            static double Keep(double value, double previous) => double.IsFinite(value) ? value : previous;
+            var rates = new Rates(Keep(input.Value, r.input), Keep(output.Value, r.output), Keep(w5.Value, r.write5m),
+                Keep(w1.Value, r.write1h), Keep(read.Value, r.read));
             m.Update(x => x with { priceOverrides = new Dictionary<string, Rates>(x.priceOverrides) { [id] = rates } });
         }
         else if (result == ContentDialogResult.Secondary)

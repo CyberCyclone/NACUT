@@ -6,6 +6,10 @@ on:
   pull_request:
     paths: ['core/**', 'shared/**', 'linux/**', '.github/workflows/linux.yml']
 
+# Read-only token: the workflows only build and upload artifacts.
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:
@@ -14,9 +18,9 @@ jobs:
         os: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: |
             core
@@ -25,13 +29,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libdbus-1-dev pkg-config
       - name: Build
         run: |
-          (cd core && cargo build --release -p nacut-cli)
-          (cd linux && cargo build --release)
+          (cd core && cargo build --release --locked -p nacut-cli)
+          (cd linux && cargo build --release --locked)
       - name: .deb
         run: |
           cargo install cargo-deb --locked
           cd linux && cargo deb --no-build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: NACUT-Linux-${{ matrix.os }}
           path: linux/target/debian/*.deb

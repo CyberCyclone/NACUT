@@ -1,7 +1,7 @@
 //! Preferences with the same five sections as the Mac (SettingsView.swift), as an AdwPreferencesWindow.
 //! Pages are rebuilt on structural changes; status rows refresh whenever the core's data changes.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -19,12 +19,26 @@ pub struct Preferences {
     model: Rc<AppModel>,
     pages: RefCell<Vec<adw::PreferencesPage>>,
     live: RefCell<Vec<Box<dyn Fn()>>>,
+    /// The org's people are fetched once per run (or on a new key / Refresh now), not on every rebuild.
+    actors_requested: Cell<bool>,
+    /// The key saved this run is a Console Admin key: keep warning about it.
+    admin_key: Cell<bool>,
 }
+
+const ADMIN_KEY_PREFIX: &str = "sk-ant-admin";
+const ADMIN_KEY_WARNING: &str = "Use a Claude Enterprise key scoped to read:analytics if you can. A Console Admin key (sk-ant-admin…) also works, but it can manage your whole organization, so only store one on a computer you trust.";
 
 impl Preferences {
     pub fn new(model: Rc<AppModel>) -> Rc<Self> {
         let window = adw::PreferencesWindow::builder().title("NACUT Preferences").default_width(880).default_height(680).search_enabled(false).hide_on_close(true).build();
-        let p = Rc::new(Self { window, model: model.clone(), pages: RefCell::new(vec![]), live: RefCell::new(vec![]) });
+        let p = Rc::new(Self {
+            window,
+            model: model.clone(),
+            pages: RefCell::new(vec![]),
+            live: RefCell::new(vec![]),
+            actors_requested: Cell::new(false),
+            admin_key: Cell::new(false),
+        });
         p.fill();
         let weak = Rc::downgrade(&p);
         model.connect_changed(move || {
@@ -82,6 +96,30 @@ impl Preferences {
         let (l2, m) = (l.clone(), self.model.clone());
         self.live.borrow_mut().push(Box::new(move || l2.set_label(&f(&m))));
         l
+    }
+
+    /// Fetches the org's people in the background, then rebuilds the pages so the picker lists them.
+    fn load_actors(self: &Rc<Self>) {
+        self.actors_requested.set(true);
+        let weak = Rc::downgrade(self);
+        self.model.background(
+            |e| e.load_actors(),
+            move |actors| {
+                if let Some(p) = weak.upgrade() {
+                    if !actors.is_empty() {
+                        p.rebuild_later();
+                    }
+                }
+            },
+        );
+    }
+
+    /// A warning-coloured row explaining what an Admin key can do.
+    fn admin_warning() -> adw::ActionRow {
+        let row = adw::ActionRow::builder().title(gtk::glib::markup_escape_text(ADMIN_KEY_WARNING).as_str()).build();
+        row.add_prefix(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
+        row.add_css_class("warning");
+        row
     }
 
     fn page(name: &str, title: &str, icon: &str) -> adw::PreferencesPage {
@@ -263,13 +301,20 @@ impl Preferences {
         let s = m.settings();
         let page = Self::page("sources", "Data Sources", "drive-harddisk-symbolic");
 
-        let g = Self::group("Subscription limits", Some("Shows your 5-hour and weekly limit usage, including desktop-app chats. Uses the Claude Code sign-in (~/.claude/.credentials.json) and the same unofficial endpoint as Claude Code's /usage, so it may stop working if Anthropic changes it. When the sign-in expires (about every 8 hours) NACUT has Claude Code refresh it by sending a one-word Haiku prompt (not saved to your history)."));
+        let g = Self::group("Subscription limits", Some("Shows your 5-hour and weekly limit usage, including desktop-app chats. Uses the Claude Code sign-in (~/.claude/.credentials.json) and the same unofficial endpoint as Claude Code's /usage, so it may stop working if Anthropic changes it."));
         let me = self.clone();
         g.add(&Self::switch("Show Max/Pro plan limits", None, s.limits_enabled, move |on| {
             me.model.update(|s| s.limits_enabled = on);
             me.rebuild_later();
         }));
         if s.limits_enabled {
+            let m2 = m.clone();
+            g.add(&Self::switch(
+                "Refresh sign-in automatically",
+                Some("When the Claude Code sign-in expires (about every 8 hours), run <tt>claude</tt> with a one-word Haiku prompt so it refreshes itself. Off: run <tt>claude</tt> yourself when limits pause."),
+                s.auto_refresh_sign_in,
+                move |on| m2.update(|s| s.auto_refresh_sign_in = on),
+            ));
             let row = adw::ActionRow::builder().title("Status").build();
             let l = self.live_label(|m| {
                 let snap = m.snap();
@@ -286,7 +331,7 @@ impl Preferences {
         }
         page.add(&g);
 
-        let g = Self::group("Anthropic Usage & Cost API", Some("Optional. Pulls exact billed cost from Anthropic's Usage & Cost API. Console orgs: an Admin API key. Claude Enterprise: a key with read:analytics created by your org's primary owner. If your org doesn't allow it, the test tells you and NACUT keeps using local logs. The key is stored only in your keyring (Secret Service). API data lags 4–24 h, so Hybrid fills recent hours from local logs, scaled to match your billed rate."));
+        let g = Self::group("Anthropic Usage & Cost API", Some("Optional. Pulls exact billed cost from Anthropic's Usage & Cost API. Use a Claude Enterprise key scoped to read:analytics (created by your org's primary owner) if you can; a Console Admin key also works. If your org doesn't allow it, the test tells you and NACUT keeps using local logs. The key is stored only in your keyring (Secret Service). API data lags 4–24 h, so Hybrid fills recent hours from local logs, scaled to match your billed rate."));
         let api = m.snap().api.clone();
         if api.has_key {
             let row = adw::ActionRow::builder().title("Connection").build();
@@ -295,6 +340,9 @@ impl Preferences {
                 format!("{}{}", if a.usable { "✓ " } else { "⚠ " }, a.message)
             }));
             g.add(&row);
+            if self.admin_key.get() {
+                g.add(&Self::admin_warning());
+            }
             let modes = [DataSourceMode::Logs, DataSourceMode::Hybrid, DataSourceMode::Api];
             let m2 = m.clone();
             g.add(&Self::combo("Use", None, &modes.map(model::source_title), modes.iter().position(|x| *x == s.data_source).unwrap_or(0), move |i| m2.update(|s| s.data_source = modes[i])));
@@ -321,12 +369,17 @@ impl Preferences {
             let m2 = m.clone();
             test.connect_clicked(move |_| m2.background(|e| e.test_api(), |_| {}));
             let refresh = gtk::Button::with_label("Refresh now");
-            let m2 = m.clone();
-            refresh.connect_clicked(move |_| m2.engine.refresh_api(true));
+            let me = self.clone();
+            refresh.connect_clicked(move |_| {
+                me.model.engine.refresh_api(true);
+                me.load_actors();
+            });
             let remove = gtk::Button::with_label("Remove key");
             remove.add_css_class("destructive-action");
             let me = self.clone();
             remove.connect_clicked(move |_| {
+                me.actors_requested.set(false);
+                me.admin_key.set(false);
                 me.model.engine.remove_api_key();
                 me.model.reload();
                 me.rebuild_later();
@@ -337,11 +390,16 @@ impl Preferences {
             let row = adw::ActionRow::builder().title("Actions").build();
             row.add_suffix(&buttons);
             g.add(&row);
-            if api.actors.is_empty() {
-                m.background(|e| e.load_actors(), |_| {});
+            if api.actors.is_empty() && !self.actors_requested.get() {
+                self.load_actors();
             }
         } else {
-            let key = adw::PasswordEntryRow::builder().title("API key (sk-ant-admin… or read:analytics)").show_apply_button(true).build();
+            let key = adw::PasswordEntryRow::builder().title("API key (read:analytics, or sk-ant-admin…)").show_apply_button(true).build();
+            // Shown as soon as an Admin key is pasted, and kept after saving it.
+            let warning = Self::admin_warning();
+            warning.set_visible(false);
+            let w2 = warning.clone();
+            key.connect_changed(move |row| w2.set_visible(row.text().trim().starts_with(ADMIN_KEY_PREFIX)));
             let result = adw::ActionRow::builder().build();
             result.set_visible(api.state != ApiState::NotConfigured);
             result.set_title(&format!("⚠ {}", api.message));
@@ -353,6 +411,7 @@ impl Preferences {
                     return;
                 }
                 row.set_sensitive(false);
+                let admin = k.starts_with(ADMIN_KEY_PREFIX);
                 let (me2, r3, row2) = (me.clone(), r2.clone(), row.clone());
                 me.model.background(
                     move |e| {
@@ -363,6 +422,9 @@ impl Preferences {
                         row2.set_sensitive(true);
                         row2.set_text("");
                         if usable {
+                            // A new key: fetch its org's people again.
+                            me2.actors_requested.set(false);
+                            me2.admin_key.set(admin);
                             me2.rebuild_later();
                         } else {
                             r3.set_title(&format!("⚠ {message}"));
@@ -372,6 +434,7 @@ impl Preferences {
                 );
             });
             g.add(&key);
+            g.add(&warning);
             g.add(&result);
         }
         page.add(&g);

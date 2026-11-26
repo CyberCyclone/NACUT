@@ -2,6 +2,7 @@ using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Nacut.Views;
+using uniffi.nacut;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 
@@ -15,6 +16,30 @@ namespace Nacut;
 static class DebugRenderer
 {
     public static string? OutputDir => Program.Arg("--render-to");
+
+    /// <summary>The throwaway data folder the render engine uses; deleted when rendering ends.</summary>
+    static string? sandbox;
+
+    /// <summary>
+    /// An engine on a temporary copy of the app's settings and history cache (%APPDATA%\NACUT), so
+    /// rendering (including `--limits-json`) never writes to the real folder or changes real settings.
+    /// </summary>
+    public static NacutEngine CreateEngine()
+    {
+        var real = NacutMethods.StandardDataDir();
+        sandbox = Path.Combine(Path.GetTempPath(), $"NACUT-render-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(sandbox);
+        foreach (var name in new[] { "settings.json", "log-cache-v3.json", "api-cache-v2.json" })
+        {
+            try
+            {
+                var source = Path.Combine(real, name);
+                if (File.Exists(source)) File.Copy(source, Path.Combine(sandbox, name));
+            }
+            catch (Exception e) { Log.Write($"Render: couldn't copy {name}: {e.Message}"); }
+        }
+        return new NacutEngine(sandbox, Path.Combine(sandbox, "settings.json"), null);
+    }
 
     public static async Task RunAsync(AppModel m)
     {
@@ -60,6 +85,11 @@ static class DebugRenderer
         }
         finally
         {
+            if (sandbox is not null)
+            {
+                try { Directory.Delete(sandbox, true); }
+                catch (Exception e) { Log.Write($"Render: couldn't remove {sandbox}: {e.Message}"); }
+            }
             Application.Current.Exit();
         }
     }

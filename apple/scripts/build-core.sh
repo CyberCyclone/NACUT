@@ -21,7 +21,7 @@ FLAGS=()
 TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
 for t in "${TARGETS[@]}"; do
   rustup target add "$t" >/dev/null 2>&1 || true
-  cargo build --manifest-path "$CORE/Cargo.toml" -p nacut-ffi --lib --target "$t" ${FLAGS[@]+"${FLAGS[@]}"}
+  cargo build --locked --manifest-path "$CORE/Cargo.toml" -p nacut-ffi --lib --target "$t" ${FLAGS[@]+"${FLAGS[@]}"}
 done
 
 rm -rf "$OUT" && mkdir -p "$OUT/include"
@@ -33,7 +33,7 @@ lipo -create \
 # Bindings from the host build's dylib (library mode reads the UniFFI metadata and runs
 # `cargo metadata`, so it must run inside the workspace).
 HOST_DYLIB="$CORE/target/aarch64-apple-darwin/$PROFILE/libnacut_ffi.dylib"
-(cd "$CORE" && cargo run -q -p nacut-ffi --bin uniffi-bindgen -- \
+(cd "$CORE" && cargo run -q --locked -p nacut-ffi --bin uniffi-bindgen -- \
   generate --library "$HOST_DYLIB" --language swift --out-dir "$OUT/gen" 2>&1 | grep -v swiftformat || true)
 test -f "$OUT/gen/nacut.swift" || { echo "Swift binding generation failed" >&2; exit 1; }
 

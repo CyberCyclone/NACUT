@@ -42,7 +42,8 @@ pub struct AppModel {
 impl AppModel {
     /// `render_mode`: one scan, no background work, network or keyring access (screenshots).
     pub fn new(render_mode: bool) -> (Rc<Self>, async_channel::Receiver<CoreEvent>) {
-        let engine = Arc::new(Engine::new(EngineConfig::standard()));
+        let config = if render_mode { crate::render::engine_config() } else { EngineConfig::standard() };
+        let engine = Arc::new(Engine::new(config));
         let (tx, rx) = async_channel::unbounded();
         engine.set_observer(Some(Arc::new(Bridge(tx))));
         if render_mode {

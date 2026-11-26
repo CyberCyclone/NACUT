@@ -30,7 +30,7 @@ impl std::fmt::Display for LimitsError {
         match self {
             Self::NoCredential => write!(f, "No Claude Code sign-in found. {run} and sign in."),
             Self::Unreadable(e) => write!(f, "Couldn't read the Claude Code sign-in ({e})."),
-            Self::Expired => write!(f, "Sign-in expired and Claude Code couldn't refresh it. {run}."),
+            Self::Expired => write!(f, "Claude Code sign-in expired. {run} to refresh it."),
             Self::Http(401) => write!(f, "Sign-in rejected. {run}."),
             Self::Http(c) => write!(f, "Limits request failed (HTTP {c})."),
             Self::Network(e) => write!(f, "Couldn't reach Anthropic ({e})."),
@@ -52,11 +52,15 @@ fn token() -> Result<(String, bool), LimitsError> {
     }
 }
 
-/// Reads the sign-in, refreshes it through Claude Code if it has expired (or is rejected), and fetches limits.
-pub fn fetch() -> Result<Vec<PlanLimit>, LimitsError> {
+/// Reads the sign-in and fetches limits. With `allow_refresh`, an expired (or rejected) sign-in is
+/// refreshed by running Claude Code; without it, the user has to run `claude` themselves.
+pub fn fetch(allow_refresh: bool) -> Result<Vec<PlanLimit>, LimitsError> {
     let (mut tok, expired) = token()?;
     let mut refreshed = false;
     if expired {
+        if !allow_refresh {
+            return Err(LimitsError::Expired);
+        }
         refreshed = refresher::refresh();
         let (t, still_expired) = token()?;
         if still_expired {
@@ -65,7 +69,7 @@ pub fn fetch() -> Result<Vec<PlanLimit>, LimitsError> {
         tok = t;
     }
     match request(&tok) {
-        Err(LimitsError::Http(401)) if !refreshed => {
+        Err(LimitsError::Http(401)) if !refreshed && allow_refresh => {
             // Token revoked early or rotated elsewhere: let Claude Code refresh once and retry.
             if !refresher::refresh() {
                 return Err(LimitsError::Http(401));
@@ -77,7 +81,7 @@ pub fn fetch() -> Result<Vec<PlanLimit>, LimitsError> {
 }
 
 fn request(token: &str) -> Result<Vec<PlanLimit>, LimitsError> {
-    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
+    let agent = crate::platform::net::agent(Duration::from_secs(20));
     let resp = agent
         .get(USAGE_URL)
         .set("Authorization", &format!("Bearer {token}"))

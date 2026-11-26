@@ -18,6 +18,9 @@ pub const BETA_HEADER: &str = "analytics-usage-cost-2026-08-24";
 pub const API_VERSION: &str = "2026-10-21";
 pub const USER_AGENT: &str = "NACUT/1.0";
 const COST_PATH: &str = "/v1/organizations/analytics/cost";
+/// Stops paging if the server keeps saying there's more (≈ 1,000 rows per page; a year of hourly rows by
+/// model needs well under this).
+const MAX_PAGES: usize = 500;
 
 /// One hour of billed cost for one model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -133,7 +136,7 @@ pub struct UreqTransport {
 
 impl Default for UreqTransport {
     fn default() -> Self {
-        Self { agent: ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).build() }
+        Self { agent: crate::platform::net::agent(Duration::from_secs(30)) }
     }
 }
 
@@ -249,7 +252,7 @@ impl AnalyticsClient {
         let start = now - SignedDuration::from_hours(30 * 24);
         let mut out: HashMap<String, ApiActor> = HashMap::new();
         let mut page: Option<String> = None;
-        loop {
+        for _ in 0..MAX_PAGES {
             let mut q = vec![
                 ("starting_at", rfc3339(start)),
                 ("ending_at", rfc3339(now)),
@@ -266,12 +269,12 @@ impl AnalyticsClient {
             }
             page = if p.has_more == Some(true) { p.next_page } else { None };
             if page.is_none() {
-                break;
+                let mut v: Vec<ApiActor> = out.into_values().collect();
+                v.sort_by(|a, b| b.cost.total_cmp(&a.cost));
+                return Ok(v);
             }
         }
-        let mut v: Vec<ApiActor> = out.into_values().collect();
-        v.sort_by(|a, b| b.cost.total_cmp(&a.cost));
-        Ok(v)
+        Err(ApiError::Decoding("too many pages".into()))
     }
 
     fn paged(&self, query: &[(&str, String)]) -> Result<(Vec<ApiCostRow>, Option<Timestamp>), ApiError> {
@@ -287,7 +290,7 @@ impl AnalyticsClient {
     fn paged_once(&self, query: &[(&str, String)]) -> Result<(Vec<ApiCostRow>, Option<Timestamp>), ApiError> {
         let mut rows = Vec::new();
         let mut page: Option<String> = None;
-        loop {
+        for _ in 0..MAX_PAGES {
             let mut q = query.to_vec();
             if let Some(p) = &page {
                 q.push(("page", p.clone()));
@@ -309,6 +312,7 @@ impl AnalyticsClient {
                 return Ok((rows, refreshed));
             }
         }
+        Err(ApiError::Decoding("too many pages".into()))
     }
 
     fn get(&self, query: &[(&str, String)]) -> Result<WirePage, ApiError> {

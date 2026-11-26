@@ -15,9 +15,17 @@ settings:
     # and CODE_SIGN_IDENTITY to "Apple Development". Empty = "Sign to Run Locally".
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_IDENTITY: "-"
-    ENABLE_HARDENED_RUNTIME: NO
+    # Hardened runtime: blocks code injection (e.g. DYLD_INSERT_LIBRARIES) into an app that holds Keychain
+    # access to the Claude Code sign-in and the API key. Required for notarization (see README).
+    ENABLE_HARDENED_RUNTIME: YES
+    # Xcode leaves the runtime flag off for ad-hoc ("-") signatures; this keeps it on for local and CI builds.
+    OTHER_CODE_SIGN_FLAGS: "--options=runtime"
     DEAD_CODE_STRIPPING: YES
     SWIFT_STRICT_CONCURRENCY: complete
+  configs:
+    Release:
+      # No get-task-allow in release builds: other processes can't attach a debugger to read the app's memory.
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
 packages:
   # The shared Rust core (core/), built by scripts/build-core.sh into NacutCore/nacutFFI.xcframework.
   NacutCore:

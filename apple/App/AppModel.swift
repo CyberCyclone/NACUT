@@ -61,16 +61,18 @@ final class AppModel {
         }
     }
 
-    func reload() {
+    /// `forceSnapshot`: write the widget snapshot now rather than at most once a minute
+    /// (settings changes, so the widget follows a Limits ↔ Cost switch right away).
+    func reload(forceSnapshot: Bool = false) {
         snap = engine.snapshot()
         revision &+= 1
         settings.absorb(snap.settings)
-        writeSnapshot()
+        writeSnapshot(force: forceSnapshot)
     }
 
     private func pushSettings() {
         engine.setSettings(settings: settings.core)
-        reload()
+        reload(forceSnapshot: true)
     }
 
     fileprivate func post(_ alert: Alert) {
@@ -212,6 +214,8 @@ final class AppModel {
     // MARK: Widget snapshot
 
     private func writeSnapshot(force: Bool = false) {
+        // Screenshot runs (`--render-to`, maybe with fixture limits) must never touch the real widget.
+        guard DebugRenderer.outputDir == nil else { return }
         guard force || Date.now.timeIntervalSince(lastSnapshotWrite) > 60 else { return }
         lastSnapshotWrite = .now
         let cal = Calendar.current

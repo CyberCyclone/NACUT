@@ -3,6 +3,7 @@ import NacutCore
 
 @main
 struct NACUTApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var model: AppModel
 
     init() {
@@ -27,6 +28,25 @@ struct NACUTApp: App {
                 .environment(model)
         }
         .windowResizability(.contentSize)
+    }
+}
+
+/// Handles `nacut://open` (tapping the widget) by opening the menu bar panel.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.contains(where: { $0.scheme == "nacut" }) else { return }
+        // Let the launch finish if the tap started the app.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { Self.openPanel() }
+    }
+
+    /// SwiftUI has no API to open a MenuBarExtra, so click its status item.
+    @MainActor static func openPanel() {
+        for window in NSApp.windows where window.className.contains("NSStatusBarWindow") {
+            if let item = window.value(forKey: "statusItem") as? NSStatusItem, let button = item.button {
+                button.performClick(nil)
+                return
+            }
+        }
     }
 }
 

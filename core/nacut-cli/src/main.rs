@@ -153,7 +153,9 @@ fn limits(args: &Args) {
 /// Uses the same folders as the app (defaults, added folders, WSL) unless `--root` is given.
 fn summary(args: &Args) {
     let started = Instant::now();
-    let dir = std::env::temp_dir().join(format!("nacut-summary-{}", std::process::id()));
+    // A fresh private folder (random name, 0700); removed when `tmp` drops.
+    let tmp = tempfile::Builder::new().prefix("nacut-summary-").tempdir().expect("temporary folder");
+    let dir = tmp.path().to_path_buf();
     let mut settings = user_settings();
     settings.limits_enabled = false;
     settings.data_source = nacut_core::merge::DataSourceMode::Logs;
@@ -171,7 +173,6 @@ fn summary(args: &Args) {
     let month: f64 = snap.series.iter().filter(|d| d.date >= month_start && d.date <= snap.today).map(|d| d.cost).sum();
     // Calendar month (cycle start day 1 in the default settings).
     let models = e.model_stats(StatRange::Cycle);
-    let _ = std::fs::remove_dir_all(dir);
     if args.json {
         let v = serde_json::json!({
             "records": snap.record_count,

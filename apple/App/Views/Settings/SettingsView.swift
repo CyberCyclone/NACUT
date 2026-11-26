@@ -156,9 +156,12 @@ struct DataSourceSettings: View {
             Section {
                 Toggle("Show Max/Pro plan limits", isOn: Binding(
                     get: { s.limitsEnabled }, set: { model.setLimitsEnabled($0) }))
-                Text("Shows your 5-hour and weekly limit usage, including desktop-app chats. Uses the Claude Code sign-in from your Keychain (macOS asks once to allow access) and the same unofficial endpoint as Claude Code's /usage, so it may stop working if Anthropic changes it. The sign-in lasts about 8 hours; when it expires the app has Claude Code refresh it by sending a one-word Haiku prompt (not saved to your history).")
+                Text("Shows your 5-hour and weekly limit usage, including desktop-app chats. Uses the Claude Code sign-in from your Keychain (macOS asks once to allow access) and the same unofficial endpoint as Claude Code's /usage, so it may stop working if Anthropic changes it. The sign-in is sent only to api.anthropic.com.")
                     .font(.caption).foregroundStyle(.secondary)
                 if s.limitsEnabled {
+                    Toggle("Refresh sign-in automatically", isOn: $s.autoRefreshSignIn)
+                    Text("When the Claude Code sign-in expires (about every 8 hours), run `claude` with a one-word Haiku prompt so it refreshes itself. It runs with no tools, MCP servers or project settings and isn't saved to your history. Off: run `claude` yourself when limits pause.")
+                        .font(.caption).foregroundStyle(.secondary)
                     if let err = model.limitsError {
                         Label(err, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
                     } else if let at = model.status.limitsUpdatedMs.map(Date.init(ms:)) {
@@ -202,8 +205,12 @@ struct DataSourceSettings: View {
                         Label(model.apiStatusMessage, systemImage: model.api.state.symbol)
                             .foregroundStyle(.orange).font(.callout)
                     }
+                    if keyInput.trimmingCharacters(in: .whitespaces).hasPrefix("sk-ant-admin") {
+                        Label(Self.adminKeyWarning, systemImage: "exclamationmark.shield")
+                            .foregroundStyle(.orange).font(.callout)
+                    }
                 }
-                Text("Optional. Pulls exact billed cost from Anthropic's Usage & Cost API. Console orgs: an Admin API key. Claude Enterprise: a key with read:analytics created by your org's primary owner. If your org doesn't allow it, the test tells you and the app keeps using local logs. The key is stored only in your Keychain. API data lags 4–24 h, so Hybrid fills recent hours from local logs, scaled to match your billed rate.")
+                Text("Optional. Pulls exact billed cost from Anthropic's Usage & Cost API. Use a Claude Enterprise key scoped to read:analytics (created by your org's primary owner) if you can. Console orgs need an Admin API key, which can manage the whole organization, so only store one on a computer you trust. If your org doesn't allow it, the test tells you and the app keeps using local logs. The key is stored only in your Keychain. API data lags 4–24 h, so Hybrid fills recent hours from local logs, scaled to match your billed rate.")
                     .font(.caption).foregroundStyle(.secondary)
             } header: { Text("Anthropic Usage & Cost API") }
 
@@ -249,6 +256,8 @@ struct DataSourceSettings: View {
         .formStyle(.grouped)
         .task { if model.hasAPIKey && model.apiActors.isEmpty { await model.loadActors() } }
     }
+
+    static let adminKeyWarning = "This is an Admin key: it can manage your whole organization (API keys, members, workspaces), not just read usage. Prefer a key scoped to read:analytics, and only store an Admin key on a computer you trust."
 
     @ViewBuilder private var actorPicker: some View {
         let s = model.settings

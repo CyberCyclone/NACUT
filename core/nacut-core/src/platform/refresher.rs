@@ -3,8 +3,15 @@
 //! The Claude desktop app's Code tab signs in separately, so the CLI's stored token goes stale
 //! (it lasts about 8 hours) unless the CLI runs. Rather than rotating the token ourselves, which
 //! could race with Claude Code and sign it out, we run the CLI with a one-word Haiku prompt:
-//! Claude Code refreshes and saves the token itself. `--no-session-persistence` keeps it out of
-//! the transcripts this app counts. Runs at most once every 15 minutes.
+//! Claude Code refreshes and saves the token itself. Runs at most once every 15 minutes, and only
+//! while the "Refresh sign-in automatically" setting is on.
+//!
+//! The run is locked down:
+//! - `--tools ""`: no tools at all; `--strict-mcp-config` with an empty config: no MCP servers.
+//! - `--setting-sources user`: project and local settings (and their hooks) are never loaded.
+//! - It runs in a private folder (0700 on Unix) that only this app writes to, never a shared
+//!   temp folder where another user could plant `.claude/settings.json`.
+//! - `--no-session-persistence` keeps it out of the transcripts this app counts.
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -31,7 +38,8 @@ pub fn refresh() -> bool {
         return run_on_host();
     }
     let Some(exe) = executable() else { return false };
-    run(exe)
+    let Some(dir) = work_dir() else { return false };
+    run(exe, dir)
 }
 
 /// Inside a Flatpak sandbox the host's `claude` isn't visible.
@@ -39,16 +47,25 @@ fn in_flatpak() -> bool {
     cfg!(target_os = "linux") && std::path::Path::new("/.flatpak-info").exists()
 }
 
+/// A folder only this user can enter, for the CLI's working directory.
+fn work_dir() -> Option<PathBuf> {
+    let dir = super::data_dir().join("claude-refresh");
+    super::create_private_dir(&dir).ok()?;
+    Some(dir)
+}
+
 /// Runs the host's `claude` through `flatpak-spawn --host` (needs `--talk-name=org.freedesktop.Flatpak`),
-/// in a login shell so the user's own PATH (e.g. `~/.local/bin`) applies.
+/// in a login shell so the user's own PATH (e.g. `~/.local/bin`) applies, from a private folder in the
+/// host's `~/.cache`.
 fn run_on_host() -> bool {
+    const SCRIPT: &str = r#"d="${XDG_CACHE_HOME:-$HOME/.cache}/nacut/claude-refresh" && mkdir -p "$d" && chmod 700 "$d" && cd "$d" && exec claude "$@""#;
     let mut cmd = Command::new("flatpak-spawn");
-    cmd.args(["--host", "sh", "-lc", r#"cd /tmp && exec claude "$@""#, "sh"]).args(ARGS);
+    cmd.args(["--host", "sh", "-lc", SCRIPT, "sh"]).args(ARGS);
     cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
     wait(cmd)
 }
 
-/// The Claude Code CLI, from its usual install locations or `PATH`.
+/// The Claude Code CLI, from its usual install locations or `PATH` (absolute entries only).
 pub fn executable() -> Option<PathBuf> {
     let home = home_dir();
     let mut candidates: Vec<PathBuf> = Vec::new();
@@ -68,7 +85,8 @@ pub fn executable() -> Option<PathBuf> {
         candidates.push(home.join(".npm-global").join("bin").join("claude"));
     }
     if let Some(path) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path) {
+        // Relative entries (".", "bin") would resolve against whatever folder we happen to be in.
+        for dir in std::env::split_paths(&path).filter(|d| d.is_absolute()) {
             for name in if cfg!(windows) { &["claude.exe", "claude.cmd"][..] } else { &["claude"][..] } {
                 candidates.push(dir.join(name));
             }
@@ -77,35 +95,29 @@ pub fn executable() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
-const ARGS: [&str; 11] = [
+pub(crate) const ARGS: [&str; 12] = [
     "-p",
     "--model",
     "haiku",
     "--no-session-persistence",
     "--max-turns",
     "1",
+    "--tools",
+    "",
+    "--setting-sources",
+    "user",
     "--strict-mcp-config",
-    "--mcp-config",
-    r#"{"mcpServers":{}}"#,
-    "--disallowed-tools",
-    "Bash,Edit,Write,Read,WebFetch,WebSearch",
+    "--mcp-config={\"mcpServers\":{}}",
 ];
 
-fn run(exe: PathBuf) -> bool {
-    let args = ARGS;
-    let is_cmd = exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd"));
-    let mut cmd = if is_cmd {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(&exe).args(args);
-        c
-    } else {
-        let mut c = Command::new(&exe);
-        c.args(args);
-        c
-    };
-    cmd.current_dir(std::env::temp_dir()).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
-    if let Some(dir) = exe.parent() {
-        let mut paths = vec![dir.to_path_buf()];
+fn run(exe: PathBuf, dir: PathBuf) -> bool {
+    // A `.cmd` (npm install) is passed straight to `Command`: the standard library quotes batch-file
+    // arguments safely itself, which wrapping it in `cmd /C` would bypass.
+    let mut cmd = Command::new(&exe);
+    cmd.args(ARGS);
+    cmd.current_dir(dir).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+    if let Some(parent) = exe.parent() {
+        let mut paths = vec![parent.to_path_buf()];
         if let Some(p) = std::env::var_os("PATH") {
             paths.extend(std::env::split_paths(&p));
         }

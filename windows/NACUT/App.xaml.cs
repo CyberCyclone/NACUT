@@ -23,7 +23,12 @@ public partial class App : Application
         InitializeComponent();
         // Keep running with no windows open; Quit calls Exit().
         DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
-        UnhandledException += (_, e) => Log.Write($"Unhandled: {e.Exception}");
+        // Log and carry on: an exception in one UI handler shouldn't take the tray app down.
+        UnhandledException += (_, e) =>
+        {
+            Log.Write($"Unhandled: {e.Exception}");
+            e.Handled = true;
+        };
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
@@ -46,10 +51,27 @@ public partial class App : Application
         tray = new TrayIcon(Model);
         Log.Write("Tray icon created");
         if (Packaging.IsPackaged) WidgetProvider.Register();
-        AppInstance.GetCurrent().Activated += (_, _) => Dispatcher.TryEnqueue(ShowPanel);
+        AppInstance.GetCurrent().Activated += (_, e) =>
+        {
+            if (e.Kind != ExtendedActivationKind.StartupTask) Dispatcher.TryEnqueue(ShowPanel);
+        };
 
-        // Started at login or by the Widgets board: stay in the tray.
-        if (!Program.Flag("--background") && !Program.Flag("-RegisterProcessAsComServer") && !Program.Args.Any(a => a.StartsWith("----AppNotificationActivated"))) ShowPanel();
+        // Started at login (Run key or the MSIX StartupTask) or by the Widgets board: stay in the tray.
+        if (!Program.Flag("--background") && !StartedByStartupTask() && !Program.Flag("-RegisterProcessAsComServer") && !Program.Args.Any(a => a.StartsWith("----AppNotificationActivated"))) ShowPanel();
+    }
+
+    /// <summary>The MSIX StartupTask launches with no arguments, so check the activation kind.</summary>
+    static bool StartedByStartupTask()
+    {
+        try
+        {
+            return AppInstance.GetCurrent().GetActivatedEventArgs().Kind == ExtendedActivationKind.StartupTask;
+        }
+        catch (Exception e)
+        {
+            Log.Write($"Activation kind unavailable: {e.Message}");
+            return false;
+        }
     }
 
     public void TogglePanel()

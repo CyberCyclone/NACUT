@@ -1,6 +1,7 @@
-//! Small per-user UI preferences (last tab, ranges) in `~/.local/share/nacut/ui.json`.
+//! Small per-user UI preferences (last tab, ranges, Flatpak open-at-login choice) in
+//! `~/.local/share/nacut/ui.json`. Nothing sensitive is stored here; the file is still written private (0600).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -8,6 +9,12 @@ use nacut_core::engine::StatRange;
 
 thread_local! {
     static VALUES: RefCell<Option<HashMap<String, String>>> = const { RefCell::new(None) };
+    static READ_ONLY: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Keeps changes in memory only (`--render-to` screenshots must not touch the real ui.json).
+pub fn set_read_only() {
+    READ_ONLY.with(|r| r.set(true));
 }
 
 fn path() -> PathBuf {
@@ -29,8 +36,12 @@ pub fn get(key: &str, fallback: &str) -> String {
 pub fn set(key: &str, value: &str) {
     with(|m| {
         m.insert(key.to_string(), value.to_string());
-        let _ = std::fs::create_dir_all(nacut_core::platform::data_dir());
-        let _ = std::fs::write(path(), serde_json::to_vec(m).unwrap_or_default());
+        if READ_ONLY.with(|r| r.get()) {
+            return;
+        }
+        if let Err(e) = nacut_core::platform::write_private(&path(), &serde_json::to_vec(m).unwrap_or_default()) {
+            eprintln!("ui.json: {e}");
+        }
     });
 }
 
