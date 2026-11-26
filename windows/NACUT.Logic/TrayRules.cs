@@ -42,10 +42,21 @@ public static class TrayRules
         var tail = PathTail(exePath);
         foreach (var (path, promoted) in entries)
         {
-            if (path is not null && path.EndsWith(tail, StringComparison.OrdinalIgnoreCase))
+            if (path is not null && EndsWithSegments(path, tail))
                 return promoted is not int p || p == 0;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Whether `path` ends with `tail` starting at a folder boundary, so `Tools\NOTNACUT\NACUT.exe` doesn't count as
+    /// `NACUT\NACUT.exe`.
+    /// </summary>
+    static bool EndsWithSegments(string path, string tail)
+    {
+        if (!path.EndsWith(tail, StringComparison.OrdinalIgnoreCase)) return false;
+        var before = path.Length - tail.Length;
+        return before == 0 || path[before - 1] is '\\' or '/';
     }
 
     /// <summary>

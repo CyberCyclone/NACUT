@@ -61,11 +61,14 @@ public class PaletteTests
 
     [Theory]
     [InlineData(0.0)]
-    [InlineData(-0.0)]
     [InlineData(-1.0)]
     [InlineData(double.NaN)]
     [InlineData(double.NegativeInfinity)]
     public void RampHasNoFillForNothing(double fraction) => Assert.Null(Palette.RampIndex(fraction));
+
+    // Its own test: xUnit's analyzer rejects 0.0 and -0.0 as duplicate InlineData rows.
+    [Fact]
+    public void RampHasNoFillForNegativeZero() => Assert.Null(Palette.RampIndex(-0.0));
 
     [Theory]
     [InlineData(0.6, false)]
