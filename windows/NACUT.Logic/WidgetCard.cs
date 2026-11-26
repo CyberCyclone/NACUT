@@ -40,7 +40,7 @@ public static class WidgetCard
     /// Column weights for a limit's filled and empty parts, out of about 100 (the Widgets board has no progress
     /// element). Each is at least 1, since a zero weight would collapse the column.
     /// </summary>
-    public static (int Fill, int Rest) BarWeights(double utilization)
+    public static (int Fill, int Empty) BarWeights(double utilization)
     {
         var pct = double.IsNaN(utilization) ? 0 : (int)Math.Round(Math.Clamp(utilization, 0, 1) * 100);
         return (Math.Max(pct, 1), Math.Max(100 - pct, 1));
