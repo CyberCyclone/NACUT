@@ -1,10 +1,13 @@
 name: Windows app
 
+# Called by ci.yml when this build is affected.
 on:
-  push:
-    paths: ['core/**', 'shared/**', 'windows/**', '.github/workflows/windows.yml']
-  pull_request:
-    paths: ['core/**', 'shared/**', 'windows/**', '.github/workflows/windows.yml']
+  workflow_call:
+    secrets:
+      NACUT_CERT_PFX:
+        required: false
+      NACUT_CERT_PASSWORD:
+        required: false
 
 # Read-only token: the workflows only build and upload artifacts.
 permissions:

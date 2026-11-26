@@ -100,6 +100,9 @@ Render light and dark (Linux headless: `ADW_DEBUG_COLOR_SCHEME=prefer-dark GDK_B
   `build-core.ps1`). After changing anything exported through `ffi.rs` or `views.rs`, regenerate both Swift
   (`build-core.sh`) and C# (`build-core.ps1`) bindings; the generated files are git-ignored.
 - All Cargo builds use `--locked`; update `Cargo.lock` deliberately. CI actions are pinned to commit SHAs.
+- `.github/workflows/ci.yml` is the only workflow that pushes and pull requests trigger; it calls the platform
+  workflows for the paths that changed. `master` requires its `CI passed` check, so don't rename that job, and add any
+  new build job to its change detection and to that job's `needs`.
 - Settings files may start with a UTF-8 BOM (e.g. written by PowerShell); `Settings::parse` strips it.
 - Rust's sum of an empty `f64` iterator is `-0.0`; percent formatting adds `+ 0.0` to avoid printing "-0%".
 - Windows GUI processes must run in the interactive session; launched from SSH (session 0) they never appear. The panel
