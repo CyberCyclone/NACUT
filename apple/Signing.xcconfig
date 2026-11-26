@@ -1,0 +1,11 @@
+// Code signing. By default the app is signed "to run locally" (ad hoc), which needs no Apple account
+// but makes macOS ask again for Keychain access after every rebuild.
+//
+// To sign with your own Apple team, create apple/Local.xcconfig (git-ignored) containing:
+//   DEVELOPMENT_TEAM = YOURTEAMID
+//   CODE_SIGN_IDENTITY = Apple Development
+// Your team ID is in Xcode → Settings → Apple Accounts, or in your certificate's OU field.
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

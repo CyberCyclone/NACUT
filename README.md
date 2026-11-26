@@ -93,9 +93,16 @@ open /Applications/NACUT.app
 
 Then turn on **Settings → General → Open at login**.
 
-**If the widget doesn't appear in the gallery:** the app is ad-hoc signed ("Sign to Run Locally"). Add your Apple ID in
-Xcode → Settings → Accounts (a free Personal Team is fine), set `DEVELOPMENT_TEAM` and
-`CODE_SIGN_IDENTITY: "Apple Development"` in `project.yml`, and rebuild.
+**Signing with your Apple team:** by default the app is ad-hoc signed ("Sign to Run Locally"), so macOS asks for
+Keychain access again after every rebuild and the widget may not appear in the gallery. Add your Apple ID in
+Xcode → Settings → Apple Accounts (a free Personal Team is fine), then create `apple/Local.xcconfig` (git-ignored):
+
+```
+DEVELOPMENT_TEAM = YOURTEAMID
+CODE_SIGN_IDENTITY = Apple Development
+```
+
+Run `xcodegen generate` again and rebuild with `-allowProvisioningUpdates` so Xcode can create the signing profiles.
 
 **Distributing to other Macs (e.g. through MDM):** sign with a *Developer ID Application* certificate and notarize, so
 Gatekeeper accepts it and the Keychain prompt is asked once rather than after every build:

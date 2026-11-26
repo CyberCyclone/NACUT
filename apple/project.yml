@@ -5,16 +5,16 @@ options:
     macOS: "26.0"
   createIntermediateGroups: true
   developmentLanguage: en
+configFiles:
+  Debug: Signing.xcconfig
+  Release: Signing.xcconfig
 settings:
   base:
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
     CODE_SIGN_STYLE: Automatic
-    # Optional: set DEVELOPMENT_TEAM to your Apple ID team (Xcode → Settings → Accounts)
-    # and CODE_SIGN_IDENTITY to "Apple Development". Empty = "Sign to Run Locally".
-    DEVELOPMENT_TEAM: ""
-    CODE_SIGN_IDENTITY: "-"
+    # DEVELOPMENT_TEAM and CODE_SIGN_IDENTITY come from Signing.xcconfig (and your git-ignored Local.xcconfig).
     # Hardened runtime: blocks code injection (e.g. DYLD_INSERT_LIBRARIES) into an app that holds Keychain
     # access to the Claude Code sign-in and the API key. Required for notarization (see README).
     ENABLE_HARDENED_RUNTIME: YES

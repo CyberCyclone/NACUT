@@ -25,3 +25,6 @@ linux/flatpak/build-dir/
 linux/flatpak/.flatpak-builder/
 linux/flatpak/cargo-sources.json
 linux/flatpak/flatpak-cargo-generator*.py
+
+# Personal Xcode signing (team ID)
+apple/Local.xcconfig
